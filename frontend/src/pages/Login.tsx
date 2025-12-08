@@ -53,35 +53,6 @@ const Login: React.FC = () => {
     }
   };
 
-  // Test function to manually check auth state
-  const testAuthState = () => {
-    const token = localStorage.getItem('token');
-    const user = localStorage.getItem('user');
-    console.log('Test Auth State:');
-    console.log('Token in localStorage:', token);
-    console.log('User in localStorage:', user);
-    console.log('Current auth state from context:', { isAuthenticated: true, isLoading: false });
-  };
-
-  // Test API connectivity
-  const testAPI = async () => {
-    console.log('Testing API connectivity...');
-    try {
-      const response = await fetch('http://localhost:5000/api/auth/login', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email: 'test@test.com', password: 'test123' }),
-      });
-      console.log('API Response status:', response.status);
-      const data = await response.json();
-      console.log('API Response data:', data);
-    } catch (error) {
-      console.error('API Test Error:', error);
-    }
-  };
-
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary-600 via-primary-700 to-accent-700">
       <div className="absolute inset-0 bg-black/20"></div>
@@ -220,24 +191,6 @@ const Login: React.FC = () => {
             >
               Create New Account
             </Link>
-          </div>
-
-          {/* Debug Test Button */}
-          <div className="mt-4 text-center space-y-2">
-            <button
-              type="button"
-              onClick={testAuthState}
-              className="text-white/60 text-xs hover:text-white/80 transition-colors block w-full"
-            >
-              Debug: Check Auth State
-            </button>
-            <button
-              type="button"
-              onClick={testAPI}
-              className="text-white/60 text-xs hover:text-white/80 transition-colors block w-full"
-            >
-              Debug: Test API Connection
-            </button>
           </div>
 
                   </div>
