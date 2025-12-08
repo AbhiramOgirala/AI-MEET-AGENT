@@ -13,6 +13,7 @@ import {
   CircleStackIcon,
   StopIcon,
   UserCircleIcon,
+  DocumentTextIcon,
 } from '@heroicons/react/24/outline';
 import { apiService } from '../services/api';
 import { socketService } from '../services/socket';
@@ -35,10 +36,13 @@ const MeetingPage: React.FC = () => {
   const [chatMessages, setChatMessages] = useState<any[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [remoteStreams, setRemoteStreams] = useState<Map<string, MediaStream>>(new Map());
+  const [showSubtitles, setShowSubtitles] = useState(false);
+  const [subtitles, setSubtitles] = useState<Array<{ speaker: string; text: string; timestamp: Date }>>([]);
 
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const screenVideoRef = useRef<HTMLVideoElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
+  const recognitionRef = useRef<any>(null);
 
   const initializeMeeting = useCallback(async () => {
     try {
@@ -180,6 +184,71 @@ const MeetingPage: React.FC = () => {
     }
   }, [isScreenSharing]);
 
+  // Speech Recognition Effect
+  useEffect(() => {
+    if (showSubtitles && !recognitionRef.current) {
+      // Initialize speech recognition
+      if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+        const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+        const recognition = new SpeechRecognition();
+        
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = 'en-US';
+
+        recognition.onresult = (event: any) => {
+          const current = event.resultIndex;
+          const transcript = event.results[current][0].transcript;
+          const isFinal = event.results[current].isFinal;
+
+          if (isFinal && transcript.trim()) {
+            const newSubtitle = {
+              speaker: 'You',
+              text: transcript,
+              timestamp: new Date()
+            };
+            
+            setSubtitles(prev => [...prev.slice(-10), newSubtitle]);
+          }
+        };
+
+        recognition.onerror = (event: any) => {
+          console.error('Speech recognition error:', event.error);
+        };
+
+        recognitionRef.current = recognition;
+        
+        // Start recognition
+        try {
+          recognition.start();
+          console.log('Speech recognition started');
+        } catch (error) {
+          console.error('Failed to start speech recognition:', error);
+        }
+      }
+    } else if (!showSubtitles && recognitionRef.current) {
+      // Stop recognition
+      try {
+        recognitionRef.current.stop();
+        recognitionRef.current = null;
+        console.log('Speech recognition stopped');
+      } catch (error) {
+        console.error('Failed to stop speech recognition:', error);
+      }
+    }
+
+    // Cleanup
+    return () => {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch (error) {
+          console.error('Error stopping recognition:', error);
+        }
+      }
+    };
+  }, [showSubtitles]);
+
   const toggleAudio = () => {
     const newState = !isAudioEnabled;
     setIsAudioEnabled(newState);
@@ -307,6 +376,15 @@ const MeetingPage: React.FC = () => {
           
           <div className="flex items-center space-x-2">
             <button
+              onClick={() => setShowSubtitles(!showSubtitles)}
+              className={`p-2 rounded-lg transition-colors ${
+                showSubtitles ? 'bg-primary-600' : 'hover:bg-secondary-700'
+              }`}
+              title="Toggle Subtitles"
+            >
+              <DocumentTextIcon className="w-5 h-5" />
+            </button>
+            <button
               onClick={() => setShowChat(!showChat)}
               className={`p-2 rounded-lg transition-colors ${
                 showChat ? 'bg-primary-600' : 'hover:bg-secondary-700'
@@ -335,7 +413,26 @@ const MeetingPage: React.FC = () => {
       {/* Main Meeting Area */}
       <div className="flex h-[calc(100vh-60px)]">
         {/* Video Grid */}
-        <div className={`flex-1 ${gridClass} participant-grid`}>
+        <div className={`flex-1 ${gridClass} participant-grid relative`}>
+          {/* Subtitles Overlay */}
+          {showSubtitles && (
+            <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 z-20 max-w-2xl">
+              <div className="bg-black/80 backdrop-blur-sm rounded-lg p-3 max-h-32 overflow-y-auto">
+                {subtitles.length === 0 ? (
+                  <p className="text-white text-sm text-center italic">Listening for speech...</p>
+                ) : (
+                  <div className="space-y-2">
+                    {subtitles.slice(-3).map((subtitle, index) => (
+                      <div key={index} className="text-white text-sm">
+                        <span className="font-semibold text-primary-400">{subtitle.speaker}: </span>
+                        <span>{subtitle.text}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
           {/* Local Video */}
           <div className="video-container relative">
             <video
