@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { EyeIcon, EyeSlashIcon, UserIcon, LockClosedIcon, EnvelopeIcon } from '@heroicons/react/24/outline';
 import { useAuth } from '../contexts/AuthContext';
+import '../styles/scrollbar.css';
 
 const Register: React.FC = () => {
   const [formData, setFormData] = useState({
@@ -102,9 +103,9 @@ const Register: React.FC = () => {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5 }}
-        className="relative z-10 w-full max-w-md px-4"
+        className="relative z-10 w-full max-w-lg px-4"
       >
-        <div className="glass-effect rounded-2xl p-8 shadow-2xl">
+        <div className="glass-effect rounded-2xl p-6 shadow-2xl max-h-[90vh] overflow-y-auto custom-scrollbar">
           {/* Logo/Brand */}
           <div className="text-center mb-8">
             <motion.div
@@ -122,9 +123,9 @@ const Register: React.FC = () => {
           </div>
 
           {/* Register Form */}
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-3">
             {/* Name Fields */}
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label htmlFor="firstName" className="block text-sm font-medium text-white/90 mb-2">
                   First Name
@@ -135,7 +136,7 @@ const Register: React.FC = () => {
                   name="firstName"
                   value={formData.firstName}
                   onChange={handleChange}
-                  className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-white/50 focus:border-transparent transition-all"
+                  className="w-full px-3 py-2.5 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-white/50 focus:border-transparent transition-all"
                   placeholder="First name"
                 />
               </div>
@@ -149,7 +150,7 @@ const Register: React.FC = () => {
                   name="lastName"
                   value={formData.lastName}
                   onChange={handleChange}
-                  className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-white/50 focus:border-transparent transition-all"
+                  className="w-full px-3 py-2.5 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-white/50 focus:border-transparent transition-all"
                   placeholder="Last name"
                 />
               </div>
@@ -169,7 +170,7 @@ const Register: React.FC = () => {
                   value={formData.username}
                   onChange={handleChange}
                   required
-                  className={`w-full pl-10 pr-4 py-3 bg-white/10 border rounded-lg text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-white/50 focus:border-transparent transition-all ${
+                  className={`w-full pl-9 pr-3 py-2.5 bg-white/10 border rounded-lg text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-white/50 focus:border-transparent transition-all ${
                     errors.username ? 'border-red-400' : 'border-white/20'
                   }`}
                   placeholder="Choose a username"
@@ -194,7 +195,7 @@ const Register: React.FC = () => {
                   value={formData.email}
                   onChange={handleChange}
                   required
-                  className={`w-full pl-10 pr-4 py-3 bg-white/10 border rounded-lg text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-white/50 focus:border-transparent transition-all ${
+                  className={`w-full pl-9 pr-3 py-2.5 bg-white/10 border rounded-lg text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-white/50 focus:border-transparent transition-all ${
                     errors.email ? 'border-red-400' : 'border-white/20'
                   }`}
                   placeholder="Enter your email"
@@ -219,7 +220,7 @@ const Register: React.FC = () => {
                   value={formData.password}
                   onChange={handleChange}
                   required
-                  className={`w-full pl-10 pr-12 py-3 bg-white/10 border rounded-lg text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-white/50 focus:border-transparent transition-all ${
+                  className={`w-full pl-9 pr-10 py-2.5 bg-white/10 border rounded-lg text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-white/50 focus:border-transparent transition-all ${
                     errors.password ? 'border-red-400' : 'border-white/20'
                   }`}
                   placeholder="Create a password"
@@ -255,7 +256,7 @@ const Register: React.FC = () => {
                   value={formData.confirmPassword}
                   onChange={handleChange}
                   required
-                  className={`w-full pl-10 pr-12 py-3 bg-white/10 border rounded-lg text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-white/50 focus:border-transparent transition-all ${
+                  className={`w-full pl-9 pr-10 py-2.5 bg-white/10 border rounded-lg text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-white/50 focus:border-transparent transition-all ${
                     errors.confirmPassword ? 'border-red-400' : 'border-white/20'
                   }`}
                   placeholder="Confirm your password"
@@ -283,7 +284,7 @@ const Register: React.FC = () => {
               whileTap={{ scale: 0.98 }}
               type="submit"
               disabled={isLoading}
-              className="w-full bg-white text-primary-700 font-semibold py-3 rounded-lg hover:bg-white/90 transition-all disabled:opacity-50 disabled:cursor-not-allowed mt-6"
+              className="w-full bg-white text-primary-700 font-semibold py-2.5 rounded-lg hover:bg-white/90 transition-all disabled:opacity-50 disabled:cursor-not-allowed mt-4"
             >
               {isLoading ? (
                 <div className="flex items-center justify-center">

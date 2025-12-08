@@ -187,13 +187,7 @@ const Login: React.FC = () => {
             </Link>
           </div>
 
-          {/* Demo Credentials */}
-          <div className="mt-6 p-4 bg-white/10 rounded-lg border border-white/20">
-            <p className="text-white/70 text-sm mb-2">Demo Credentials:</p>
-            <p className="text-white/90 text-xs">Email: demo@example.com</p>
-            <p className="text-white/90 text-xs">Password: demo123</p>
-          </div>
-        </div>
+                  </div>
       </motion.div>
     </div>
   );
