@@ -487,12 +487,7 @@ const MeetingPage: React.FC = () => {
             </div>
           ))}
 
-          {/* Empty slots */}
-          {Array.from({ length: Math.max(0, 6 - participantCount - remoteStreams.size) }).map((_, index) => (
-            <div key={`empty-${index}`} className="video-container bg-secondary-800 flex items-center justify-center">
-              <UserCircleIcon className="w-16 h-16 text-secondary-600" />
-            </div>
-          ))}
+          {/* No empty slots - only show actual participants */}
         </div>
 
         {/* Side Panel */}
