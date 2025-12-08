@@ -4,6 +4,7 @@ import { Toaster } from 'react-hot-toast';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 
 // Lazy load pages
+const Home = React.lazy(() => import('./pages/Home'));
 const Login = React.lazy(() => import('./pages/Login'));
 const Register = React.lazy(() => import('./pages/Register'));
 const Dashboard = React.lazy(() => import('./pages/Dashboard'));
@@ -46,6 +47,9 @@ function App() {
         <div className="min-h-screen bg-gradient-to-br from-primary-50 via-white to-accent-50">
           <Suspense fallback={<LoadingSpinner />}>
             <Routes>
+              {/* Home/Landing page */}
+              <Route path="/" element={<Home />} />
+              
               {/* Public routes */}
               <Route path="/login" element={
                 <PublicRoute>
@@ -71,9 +75,6 @@ function App() {
                 </ProtectedRoute>
               } />
               
-              {/* Default redirect */}
-              <Route path="/" element={<Navigate to="/dashboard" replace />} />
-              
               {/* 404 */}
               <Route path="*" element={
                 <div className="min-h-screen flex items-center justify-center">
@@ -81,7 +82,7 @@ function App() {
                     <h1 className="text-4xl font-bold text-secondary-900 mb-4">404</h1>
                     <p className="text-secondary-600 mb-8">Page not found</p>
                     <a
-                      href="/dashboard"
+                      href="/"
                       className="btn-primary px-6 py-2 rounded-lg"
                     >
                       Go Home
