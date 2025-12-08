@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { EyeIcon, EyeSlashIcon, UserIcon, LockClosedIcon } from '@heroicons/react/24/outline';
 import { useAuth } from '../contexts/AuthContext';
@@ -12,7 +12,6 @@ const Login: React.FC = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const { login } = useAuth();
-  const navigate = useNavigate();
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData({
@@ -23,13 +22,18 @@ const Login: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    console.log('Login form submitted!');
+    console.log('Form data:', formData);
     setIsLoading(true);
 
     try {
+      console.log('Calling login function...');
       await login(formData.email, formData.password);
-      navigate('/dashboard');
+      // Navigation will be handled by AuthContext state update and PublicRoute redirect
+      console.log('Login completed, checking auth state...');
     } catch (error) {
       // Error is handled in AuthContext
+      console.log('Login failed:', error);
     } finally {
       setIsLoading(false);
     }
@@ -39,11 +43,42 @@ const Login: React.FC = () => {
     setIsLoading(true);
     try {
       await login('guest@example.com', 'guest123');
-      navigate('/dashboard');
+      // Navigation will be handled by AuthContext state update and PublicRoute redirect
+      console.log('Guest login completed, checking auth state...');
     } catch (error) {
       // Error is handled in AuthContext
+      console.log('Guest login failed:', error);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  // Test function to manually check auth state
+  const testAuthState = () => {
+    const token = localStorage.getItem('token');
+    const user = localStorage.getItem('user');
+    console.log('Test Auth State:');
+    console.log('Token in localStorage:', token);
+    console.log('User in localStorage:', user);
+    console.log('Current auth state from context:', { isAuthenticated: true, isLoading: false });
+  };
+
+  // Test API connectivity
+  const testAPI = async () => {
+    console.log('Testing API connectivity...');
+    try {
+      const response = await fetch('http://localhost:5000/api/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email: 'test@test.com', password: 'test123' }),
+      });
+      console.log('API Response status:', response.status);
+      const data = await response.json();
+      console.log('API Response data:', data);
+    } catch (error) {
+      console.error('API Test Error:', error);
     }
   };
 
@@ -185,6 +220,24 @@ const Login: React.FC = () => {
             >
               Create New Account
             </Link>
+          </div>
+
+          {/* Debug Test Button */}
+          <div className="mt-4 text-center space-y-2">
+            <button
+              type="button"
+              onClick={testAuthState}
+              className="text-white/60 text-xs hover:text-white/80 transition-colors block w-full"
+            >
+              Debug: Check Auth State
+            </button>
+            <button
+              type="button"
+              onClick={testAPI}
+              className="text-white/60 text-xs hover:text-white/80 transition-colors block w-full"
+            >
+              Debug: Test API Connection
+            </button>
           </div>
 
                   </div>

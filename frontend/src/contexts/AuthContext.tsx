@@ -33,6 +33,9 @@ const initialState: AuthState = {
 };
 
 const authReducer = (state: AuthState, action: AuthAction): AuthState => {
+  console.log('AuthReducer - Current state:', state);
+  console.log('AuthReducer - Action:', action);
+  
   switch (action.type) {
     case 'AUTH_START':
       return {
@@ -40,6 +43,7 @@ const authReducer = (state: AuthState, action: AuthAction): AuthState => {
         isLoading: true,
       };
     case 'AUTH_SUCCESS':
+      console.log('AuthReducer - AUTH_SUCCESS, setting isAuthenticated to true');
       return {
         ...state,
         user: action.payload.user,
@@ -48,6 +52,7 @@ const authReducer = (state: AuthState, action: AuthAction): AuthState => {
         isAuthenticated: true,
       };
     case 'AUTH_FAILURE':
+      console.log('AuthReducer - AUTH_FAILURE, setting isAuthenticated to false');
       return {
         ...state,
         user: null,
@@ -87,24 +92,34 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       const token = localStorage.getItem('token');
       const userStr = localStorage.getItem('user');
 
+      console.log('initAuth - Found token:', !!token, 'Found user:', !!userStr);
+
       if (token && userStr) {
         try {
           const user = JSON.parse(userStr);
+          console.log('initAuth - Dispatching AUTH_SUCCESS with stored data');
           dispatch({ type: 'AUTH_SUCCESS', payload: { user, token } });
           
           // Verify token with server
+          console.log('initAuth - Verifying token with server...');
           const response = await apiService.getCurrentUser();
+          console.log('initAuth - Token verification response:', response);
+          
           if (response.success && response.data) {
             dispatch({ type: 'UPDATE_USER', payload: response.data.user });
             localStorage.setItem('user', JSON.stringify(response.data.user));
+          } else {
+            throw new Error('Token verification failed');
           }
         } catch (error) {
           console.error('Token validation failed:', error);
+          console.log('initAuth - Clearing invalid tokens and setting AUTH_FAILURE');
           localStorage.removeItem('token');
           localStorage.removeItem('user');
           dispatch({ type: 'AUTH_FAILURE' });
         }
       } else {
+        console.log('initAuth - No tokens found, setting AUTH_FAILURE');
         dispatch({ type: 'AUTH_FAILURE' });
       }
     };
@@ -113,22 +128,27 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   }, []);
 
   const login = async (email: string, password: string): Promise<void> => {
+    console.log('Login attempt started for:', email);
     dispatch({ type: 'AUTH_START' });
     try {
       const response = await apiService.login({ email, password });
+      console.log('Login API response:', response);
       
       if (response.success && response.data) {
         const { user, token } = response.data;
         
+        console.log('Storing token and user in localStorage');
         localStorage.setItem('token', token);
         localStorage.setItem('user', JSON.stringify(user));
         
+        console.log('Dispatching AUTH_SUCCESS');
         dispatch({ type: 'AUTH_SUCCESS', payload: { user, token } });
         toast.success('Login successful!');
       } else {
         throw new Error(response.message || 'Login failed');
       }
     } catch (error: any) {
+      console.error('Login error:', error);
       dispatch({ type: 'AUTH_FAILURE' });
       const message = error.response?.data?.message || error.message || 'Login failed';
       toast.error(message);
@@ -142,22 +162,27 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     password: string;
     profile?: any;
   }): Promise<void> => {
+    console.log('Register attempt started for:', userData.email);
     dispatch({ type: 'AUTH_START' });
     try {
       const response = await apiService.register(userData);
+      console.log('Register API response:', response);
       
       if (response.success && response.data) {
         const { user, token } = response.data;
         
+        console.log('Register - Storing token and user in localStorage');
         localStorage.setItem('token', token);
         localStorage.setItem('user', JSON.stringify(user));
         
+        console.log('Register - Dispatching AUTH_SUCCESS');
         dispatch({ type: 'AUTH_SUCCESS', payload: { user, token } });
         toast.success('Registration successful!');
       } else {
         throw new Error(response.message || 'Registration failed');
       }
     } catch (error: any) {
+      console.error('Register error:', error);
       dispatch({ type: 'AUTH_FAILURE' });
       const message = error.response?.data?.message || error.message || 'Registration failed';
       toast.error(message);
@@ -230,6 +255,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     logout,
     updateProfile,
   };
+
+  console.log('AuthProvider - Current state being provided:', state);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };

@@ -58,9 +58,20 @@ const authController = {
     try {
       const { email, password } = req.body;
 
+      console.log('Login attempt for email:', email);
+
       // Find user by email
       const user = await User.findOne({ email, isActive: true });
+      console.log('User found:', !!user);
+      
       if (!user) {
+        // Try finding user without isActive filter to check if user exists but is inactive
+        const userWithoutFilter = await User.findOne({ email });
+        console.log('User exists without isActive filter:', !!userWithoutFilter);
+        if (userWithoutFilter) {
+          console.log('User isActive status:', userWithoutFilter.isActive);
+        }
+        
         return res.status(401).json({
           success: false,
           message: 'Invalid credentials'
@@ -68,8 +79,38 @@ const authController = {
       }
 
       // Check password
-      const isPasswordValid = await user.comparePassword(password);
+      let isPasswordValid = false;
+      
+      // Handle old users with short/invalid password hashes
+      if (user.password && user.password.length < 30) {
+        console.log('Detected old password format, attempting direct comparison');
+        // For old users with improperly hashed passwords, try direct comparison first
+        isPasswordValid = user.password === password;
+        
+        if (isPasswordValid) {
+          console.log('Direct password comparison succeeded, rehashing password');
+          // Rehash the password with proper bcrypt
+          const bcrypt = require('bcryptjs');
+          const salt = bcrypt.genSaltSync(12);
+          user.password = bcrypt.hashSync(password, salt);
+          await user.save();
+          console.log('Password rehashed successfully');
+        } else {
+          console.log('Direct password comparison failed');
+        }
+      } else {
+        // Normal bcrypt comparison for properly hashed passwords
+        isPasswordValid = await user.comparePassword(password);
+      }
+      
+      console.log('Password valid:', isPasswordValid);
+      console.log('Stored password hash length:', user.password ? user.password.length : 'no password');
+      console.log('Password field exists:', !!user.password);
+      
       if (!isPasswordValid) {
+        // For debugging: try to understand the password issue
+        console.log('Password comparison failed for user:', user._id);
+        console.log('User isGuest:', user.isGuest);
         return res.status(401).json({
           success: false,
           message: 'Invalid credentials'
@@ -81,6 +122,8 @@ const authController = {
       await user.save();
 
       const token = generateToken(user._id);
+
+      console.log('Login successful for user:', user._id);
 
       res.json({
         success: true,
