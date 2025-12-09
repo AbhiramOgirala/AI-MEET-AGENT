@@ -5,6 +5,14 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 
+// Get io instance from server
+let io;
+const setSocketIO = (socketIO) => {
+  io = socketIO;
+};
+
+module.exports = { router, setSocketIO };
+
 // Configure multer for file uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -95,6 +103,11 @@ router.post('/message', authenticateToken, async (req, res) => {
       message: 'Message sent successfully',
       data: { message: newMessage }
     });
+
+    // Emit socket event to all participants in the meeting
+    if (io) {
+      io.to(meetingId).emit('chat-message', newMessage);
+    }
   } catch (error) {
     console.error('Send message error:', error);
     res.status(500).json({
@@ -243,4 +256,4 @@ router.get('/:meetingId', authenticateToken, async (req, res) => {
   }
 });
 
-module.exports = router;
+module.exports = { router, setSocketIO };

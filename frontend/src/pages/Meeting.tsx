@@ -30,7 +30,7 @@ const MeetingPage: React.FC = () => {
   const [isVideoEnabled, setIsVideoEnabled] = useState(true);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
-  const [showChat, setShowChat] = useState(false);
+  const [showChat, setShowChat] = useState(true);
   const [showParticipants, setShowParticipants] = useState(false);
   const [isHandRaised, setIsHandRaised] = useState(false);
   const [chatMessages, setChatMessages] = useState<any[]>([]);
@@ -334,9 +334,15 @@ const MeetingPage: React.FC = () => {
     if (!newMessage.trim() || !meeting) return;
 
     try {
-      await apiService.sendMessage(meeting.meetingId, newMessage);
-      socketService.sendChatMessage(meeting.meetingId, newMessage);
-      setNewMessage('');
+      // Send via API to save to database
+      const response = await apiService.sendMessage(meeting.meetingId, newMessage);
+      
+      if (response.success && response.data?.message) {
+        // Add message to local state immediately for better UX
+        const message = response.data.message;
+        setChatMessages(prev => [...prev, message]);
+        setNewMessage('');
+      }
     } catch (error) {
       console.error('Error sending message:', error);
     }
@@ -492,14 +498,14 @@ const MeetingPage: React.FC = () => {
 
         {/* Side Panel */}
         {(showChat || showParticipants) && (
-          <div className="w-80 bg-secondary-800 border-l border-secondary-700 flex flex-col">
+          <div className="w-80 bg-secondary-800 border-l border-secondary-700 flex flex-col absolute right-0 top-14 bottom-16">
             {showChat && (
-              <>
+              <div className={`flex flex-col ${showParticipants ? 'h-1/2 border-b border-secondary-700' : 'h-full'}`}>
                 <div className="p-4 border-b border-secondary-700">
                   <h3 className="font-semibold">Chat</h3>
                 </div>
                 
-                <div ref={chatContainerRef} className="flex-1 overflow-y-auto p-4 space-y-3">
+                <div ref={chatContainerRef} className="flex-1 overflow-y-auto p-4 space-y-3 min-h-0">
                   {chatMessages.map((msg, index) => (
                     <div key={index} className="space-y-1">
                       <div className="flex items-center space-x-2">
@@ -515,7 +521,7 @@ const MeetingPage: React.FC = () => {
                   ))}
                 </div>
 
-                <form onSubmit={sendMessage} className="p-4 border-t border-secondary-700">
+                <form onSubmit={sendMessage} className="p-4 border-t border-secondary-700 flex-shrink-0">
                   <div className="flex space-x-2">
                     <input
                       type="text"
@@ -532,11 +538,11 @@ const MeetingPage: React.FC = () => {
                     </button>
                   </div>
                 </form>
-              </>
+              </div>
             )}
 
             {showParticipants && (
-              <>
+              <div className={`flex flex-col ${showChat ? 'h-1/2' : 'h-full'}`}>
                 <div className="p-4 border-b border-secondary-700">
                   <h3 className="font-semibold">Participants ({participantCount})</h3>
                 </div>
@@ -575,7 +581,7 @@ const MeetingPage: React.FC = () => {
                       </div>
                     ))}
                 </div>
-              </>
+              </div>
             )}
           </div>
         )}

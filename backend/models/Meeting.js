@@ -118,6 +118,12 @@ const meetingSchema = new mongoose.Schema({
       type: String,
       enum: ['text', 'file', 'system'],
       default: 'text'
+    },
+    file: {
+      fileName: String,
+      fileSize: Number,
+      mimeType: String,
+      downloadUrl: String
     }
   }],
   statistics: {

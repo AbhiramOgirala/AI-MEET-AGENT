@@ -16,6 +16,23 @@ const io = new Server(server, {
   }
 });
 
+// Socket authentication middleware
+io.use(async (socket, next) => {
+  try {
+    const token = socket.handshake.auth.token;
+    if (!token) {
+      return next(new Error('Authentication error'));
+    }
+    
+    const jwt = require('jsonwebtoken');
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    socket.userId = decoded.userId;
+    next();
+  } catch (err) {
+    next(new Error('Authentication error'));
+  }
+});
+
 // Middleware
 app.use(helmet());
 app.use(cors());
@@ -28,7 +45,7 @@ app.use('/uploads', express.static('uploads'));
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100 // limit each IP to 100 requests per windowMs
+  max: 1000 // limit each IP to 1000 requests per windowMs (increased for testing)
 });
 app.use(limiter);
 
@@ -38,11 +55,20 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/ai-meet')
 .catch(err => console.error('MongoDB connection error:', err));
 
 // Routes
-app.use('/api/auth', require('./routes/auth'));
-app.use('/api/meetings', require('./routes/meetings'));
-app.use('/api/users', require('./routes/users'));
-app.use('/api/chat', require('./routes/chat'));
-app.use('/api/recordings', require('./routes/recordings'));
+const authRouter = require('./routes/auth');
+const meetingsRouter = require('./routes/meetings');
+const usersRouter = require('./routes/users');
+const { router: chatRouter, setSocketIO } = require('./routes/chat');
+const recordingsRouter = require('./routes/recordings');
+
+// Set up socket.io for chat routes
+setSocketIO(io);
+
+app.use('/api/auth', authRouter);
+app.use('/api/meetings', meetingsRouter);
+app.use('/api/users', usersRouter);
+app.use('/api/chat', chatRouter);
+app.use('/api/recordings', recordingsRouter);
 
 // Socket.io connection handling
 io.on('connection', (socket) => {
@@ -78,11 +104,6 @@ io.on('connection', (socket) => {
 
   socket.on('screen-share', (data) => {
     socket.to(data.meetingId).emit('screen-share', data);
-  });
-
-  // Chat messages
-  socket.on('chat-message', (data) => {
-    socket.to(data.meetingId).emit('chat-message', data);
   });
 
   // Host controls
