@@ -14,15 +14,22 @@ import {
   StopIcon,
   UserCircleIcon,
   DocumentTextIcon,
+  ClipboardDocumentIcon,
+  ShareIcon,
+  Cog6ToothIcon,
+  LockClosedIcon,
 } from '@heroicons/react/24/outline';
+import toast from 'react-hot-toast';
 import { apiService } from '../services/api';
 import { socketService } from '../services/socket';
 import { webrtcService } from '../services/webrtc';
+import { useAuth } from '../contexts/AuthContext';
 import type { Meeting } from '../types';
 
 const MeetingPage: React.FC = () => {
   const { meetingId } = useParams<{ meetingId: string }>();
   const navigate = useNavigate();
+  const { user } = useAuth();
 
   const [meeting, setMeeting] = useState<Meeting | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -38,11 +45,16 @@ const MeetingPage: React.FC = () => {
   const [remoteStreams, setRemoteStreams] = useState<Map<string, MediaStream>>(new Map());
   const [showSubtitles, setShowSubtitles] = useState(false);
   const [subtitles, setSubtitles] = useState<Array<{ speaker: string; text: string; timestamp: Date }>>([]);
+  const [localStreamReady, setLocalStreamReady] = useState(false);
+  const [showMeetingInfo, setShowMeetingInfo] = useState(false);
+  const [showHostSettings, setShowHostSettings] = useState(false);
 
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const screenVideoRef = useRef<HTMLVideoElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
 
   const initializeMeeting = useCallback(async () => {
     try {
@@ -58,6 +70,7 @@ const MeetingPage: React.FC = () => {
       // Initialize WebRTC
       await webrtcService.initializeLocalMedia(true, true);
       webrtcService.setMeetingId(meetingId!);
+      setLocalStreamReady(true);
 
       // Connect to socket
       const token = localStorage.getItem('token');
@@ -169,14 +182,14 @@ const MeetingPage: React.FC = () => {
   }, [meetingId, initializeMeeting, setupSocketListeners]);
 
   useEffect(() => {
-    console.log('Local video effect - isAudioEnabled:', isAudioEnabled, 'isVideoEnabled:', isVideoEnabled);
+    console.log('Local video effect - localStreamReady:', localStreamReady, 'isVideoEnabled:', isVideoEnabled);
     if (localVideoRef.current && webrtcService.getLocalStream()) {
       console.log('Setting local video stream');
       localVideoRef.current.srcObject = webrtcService.getLocalStream();
     } else {
       console.log('No local video stream available');
     }
-  }, [isAudioEnabled, isVideoEnabled]);
+  }, [localStreamReady, isVideoEnabled]);
 
   useEffect(() => {
     if (screenVideoRef.current && webrtcService.getScreenStream()) {
@@ -287,19 +300,126 @@ const MeetingPage: React.FC = () => {
     }
   };
 
+  // Permission helpers - use useMemo to prevent unnecessary recalculations
+  const currentParticipant = meeting?.participants.find(
+    p => p.user._id === user?._id && p.status === 'joined'
+  );
+  
+  // Also check if user is the meeting host by comparing host ID
+  const isHost = currentParticipant?.role === 'host' || 
+    (meeting?.host && (
+      (typeof meeting.host === 'string' && meeting.host === user?._id) ||
+      (typeof meeting.host === 'object' && meeting.host._id === user?._id)
+    ));
+  const isCoHost = currentParticipant?.role === 'co-host';
+  const canRecord = isHost || isCoHost || currentParticipant?.permissions?.canRecord;
+  // Host can always chat, others depend on settings
+  const canChat = isHost || (meeting?.settings?.enableChat !== false);
+
   const toggleRecording = async () => {
     if (!meeting) return;
 
+    // Check permission - host can always record
+    if (!isHost && !canRecord) {
+      toast.error('You do not have permission to record this meeting');
+      return;
+    }
+
     try {
       if (!isRecording) {
+        // Start client-side recording
+        const localStream = webrtcService.getLocalStream();
+        if (!localStream) {
+          toast.error('No media stream available for recording');
+          return;
+        }
+
+        // Clear previous chunks
+        recordedChunksRef.current = [];
+
+        // Create a combined stream with all tracks
+        const combinedStream = new MediaStream();
+        localStream.getTracks().forEach(track => combinedStream.addTrack(track));
+
+        // Check supported mimeTypes
+        let mimeType = 'video/webm;codecs=vp9,opus';
+        if (!MediaRecorder.isTypeSupported(mimeType)) {
+          mimeType = 'video/webm;codecs=vp8,opus';
+          if (!MediaRecorder.isTypeSupported(mimeType)) {
+            mimeType = 'video/webm';
+          }
+        }
+
+        const mediaRecorder = new MediaRecorder(combinedStream, { mimeType });
+
+        // Store chunks in ref (not state) to avoid closure issues
+        mediaRecorder.ondataavailable = (event) => {
+          console.log('Recording data available:', event.data.size, 'bytes');
+          if (event.data.size > 0) {
+            recordedChunksRef.current.push(event.data);
+          }
+        };
+
+        mediaRecorder.onstop = async () => {
+          console.log('Recording stopped, chunks:', recordedChunksRef.current.length);
+          
+          // Create blob from recorded chunks using the ref
+          const chunks = recordedChunksRef.current;
+          if (chunks.length === 0) {
+            toast.error('No recording data captured');
+            return;
+          }
+
+          const blob = new Blob(chunks, { type: 'video/webm' });
+          console.log('Recording blob size:', blob.size);
+          
+          // Upload to server
+          const file = new File([blob], `recording-${meeting.meetingId}-${Date.now()}.webm`, {
+            type: 'video/webm'
+          });
+
+          try {
+            await apiService.uploadRecording(meeting.meetingId, file);
+            toast.success('Recording saved successfully!');
+          } catch (error) {
+            console.error('Error uploading recording:', error);
+            toast.error('Failed to save recording to server');
+          }
+
+          // Always offer local download
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `meeting-${meeting.meetingId}-${new Date().toISOString().replace(/[:.]/g, '-')}.webm`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+          
+          // Clear chunks
+          recordedChunksRef.current = [];
+        };
+
+        mediaRecorderRef.current = mediaRecorder;
+        mediaRecorder.start(1000); // Collect data every second
+        
+        // Notify server
         await apiService.startRecording(meeting.meetingId);
         setIsRecording(true);
+        toast.success('Recording started');
       } else {
+        // Stop recording
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+          mediaRecorderRef.current.stop();
+        }
+        
         await apiService.stopRecording(meeting.meetingId);
         setIsRecording(false);
+        toast.success('Recording stopped - processing...');
       }
     } catch (error) {
       console.error('Error toggling recording:', error);
+      toast.error('Failed to toggle recording');
     }
   };
 
@@ -327,11 +447,18 @@ const MeetingPage: React.FC = () => {
   const cleanup = () => {
     webrtcService.cleanup();
     socketService.disconnect();
+    setLocalStreamReady(false);
   };
 
   const sendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMessage.trim() || !meeting) return;
+
+    // Check chat permission
+    if (!canChat) {
+      toast.error('Chat is disabled by the host');
+      return;
+    }
 
     try {
       // Send via API to save to database
@@ -345,6 +472,47 @@ const MeetingPage: React.FC = () => {
       }
     } catch (error) {
       console.error('Error sending message:', error);
+      toast.error('Failed to send message');
+    }
+  };
+
+  // Host settings handlers
+  const updateMeetingSettings = async (newSettings: Partial<Meeting['settings']>) => {
+    if (!meeting || !isHost) return;
+
+    // Optimistically update the UI
+    setMeeting(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        settings: {
+          ...prev.settings,
+          ...newSettings
+        }
+      };
+    });
+
+    try {
+      const response = await apiService.updateMeetingSettings(meeting.meetingId, newSettings);
+      if (response.success && response.data?.meeting) {
+        // Update with server response but keep modal open
+        setMeeting(prev => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            settings: response.data!.meeting.settings
+          };
+        });
+        toast.success('Settings updated');
+      }
+    } catch (error) {
+      console.error('Error updating settings:', error);
+      toast.error('Failed to update settings');
+      // Revert on error - refetch meeting
+      const response = await apiService.getMeeting(meeting.meetingId);
+      if (response.success && response.data) {
+        setMeeting(response.data.meeting);
+      }
     }
   };
 
@@ -368,10 +536,19 @@ const MeetingPage: React.FC = () => {
         <div className="flex items-center justify-between px-4 py-3">
           <div className="flex items-center space-x-4">
             <h1 className="text-lg font-semibold">{meeting?.title}</h1>
-            <div className="flex items-center space-x-2 text-sm">
+            <div className="flex items-center space-x-2 text-sm text-secondary-400">
               <UsersIcon className="w-4 h-4" />
               <span>{participantCount}</span>
             </div>
+            {/* Meeting ID Badge */}
+            <button
+              onClick={() => setShowMeetingInfo(!showMeetingInfo)}
+              className="flex items-center space-x-2 bg-secondary-700 hover:bg-secondary-600 px-3 py-1 rounded-lg text-sm transition-colors"
+              title="Click to copy meeting ID"
+            >
+              <ShareIcon className="w-4 h-4" />
+              <span className="font-mono">{meeting?.meetingId}</span>
+            </button>
             {isRecording && (
               <div className="flex items-center space-x-2 text-red-500">
                 <CircleStackIcon className="w-4 h-4 animate-pulse" />
@@ -381,6 +558,18 @@ const MeetingPage: React.FC = () => {
           </div>
           
           <div className="flex items-center space-x-2">
+            {/* Host Settings Button */}
+            {isHost && (
+              <button
+                onClick={() => setShowHostSettings(!showHostSettings)}
+                className={`p-2 rounded-lg transition-colors ${
+                  showHostSettings ? 'bg-primary-600' : 'hover:bg-secondary-700'
+                }`}
+                title="Host Settings"
+              >
+                <Cog6ToothIcon className="w-5 h-5" />
+              </button>
+            )}
             <button
               onClick={() => setShowSubtitles(!showSubtitles)}
               className={`p-2 rounded-lg transition-colors ${
@@ -415,6 +604,156 @@ const MeetingPage: React.FC = () => {
           </div>
         </div>
       </header>
+
+      {/* Meeting Info Modal */}
+      {showMeetingInfo && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowMeetingInfo(false)}>
+          <div className="bg-secondary-800 rounded-xl p-6 max-w-md w-full mx-4" onClick={e => e.stopPropagation()}>
+            <h3 className="text-xl font-bold mb-4">Share Meeting</h3>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm text-secondary-400 mb-2">Meeting ID</label>
+                <div className="flex items-center space-x-2">
+                  <code className="flex-1 bg-secondary-700 px-4 py-3 rounded-lg font-mono text-lg">
+                    {meeting?.meetingId}
+                  </code>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(meeting?.meetingId || '');
+                      toast.success('Meeting ID copied!');
+                    }}
+                    className="bg-primary-600 hover:bg-primary-700 p-3 rounded-lg transition-colors"
+                    title="Copy Meeting ID"
+                  >
+                    <ClipboardDocumentIcon className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm text-secondary-400 mb-2">Join Link</label>
+                <div className="flex items-center space-x-2">
+                  <code className="flex-1 bg-secondary-700 px-4 py-3 rounded-lg text-sm truncate">
+                    {window.location.origin}/join/{meeting?.meetingId}
+                  </code>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(`${window.location.origin}/join/${meeting?.meetingId}`);
+                      toast.success('Join link copied!');
+                    }}
+                    className="bg-primary-600 hover:bg-primary-700 p-3 rounded-lg transition-colors"
+                    title="Copy Join Link"
+                  >
+                    <ClipboardDocumentIcon className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+
+              <p className="text-sm text-secondary-400">
+                Share this meeting ID or link with others so they can join your meeting.
+              </p>
+            </div>
+
+            <button
+              onClick={() => setShowMeetingInfo(false)}
+              className="w-full mt-6 bg-secondary-700 hover:bg-secondary-600 py-2 rounded-lg transition-colors"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Host Settings Modal */}
+      {showHostSettings && isHost && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowHostSettings(false)}>
+          <div className="bg-secondary-800 rounded-xl p-6 max-w-md w-full mx-4" onClick={e => e.stopPropagation()}>
+            <h3 className="text-xl font-bold mb-4">Host Settings</h3>
+            
+            <div className="space-y-4">
+              {/* Chat Settings */}
+              <div className="flex items-center justify-between p-3 bg-secondary-700 rounded-lg">
+                <div>
+                  <p className="font-medium">Enable Chat</p>
+                  <p className="text-sm text-secondary-400">Allow participants to send messages</p>
+                </div>
+                <button
+                  onClick={() => updateMeetingSettings({ enableChat: !meeting?.settings.enableChat })}
+                  className={`w-12 h-6 rounded-full transition-colors ${
+                    meeting?.settings.enableChat ? 'bg-green-600' : 'bg-secondary-600'
+                  }`}
+                >
+                  <div className={`w-5 h-5 bg-white rounded-full transition-transform ${
+                    meeting?.settings.enableChat ? 'translate-x-6' : 'translate-x-0.5'
+                  }`} />
+                </button>
+              </div>
+
+              {/* Recording Permission */}
+              <div className="flex items-center justify-between p-3 bg-secondary-700 rounded-lg">
+                <div>
+                  <p className="font-medium">Enable Recording</p>
+                  <p className="text-sm text-secondary-400">Allow meeting to be recorded</p>
+                </div>
+                <button
+                  onClick={() => updateMeetingSettings({ enableRecording: !meeting?.settings.enableRecording })}
+                  className={`w-12 h-6 rounded-full transition-colors ${
+                    meeting?.settings.enableRecording ? 'bg-green-600' : 'bg-secondary-600'
+                  }`}
+                >
+                  <div className={`w-5 h-5 bg-white rounded-full transition-transform ${
+                    meeting?.settings.enableRecording ? 'translate-x-6' : 'translate-x-0.5'
+                  }`} />
+                </button>
+              </div>
+
+              {/* Screen Share Permission */}
+              <div className="flex items-center justify-between p-3 bg-secondary-700 rounded-lg">
+                <div>
+                  <p className="font-medium">Enable Screen Share</p>
+                  <p className="text-sm text-secondary-400">Allow participants to share screen</p>
+                </div>
+                <button
+                  onClick={() => updateMeetingSettings({ enableScreenShare: !meeting?.settings.enableScreenShare })}
+                  className={`w-12 h-6 rounded-full transition-colors ${
+                    meeting?.settings.enableScreenShare ? 'bg-green-600' : 'bg-secondary-600'
+                  }`}
+                >
+                  <div className={`w-5 h-5 bg-white rounded-full transition-transform ${
+                    meeting?.settings.enableScreenShare ? 'translate-x-6' : 'translate-x-0.5'
+                  }`} />
+                </button>
+              </div>
+
+              {/* Mute on Entry */}
+              <div className="flex items-center justify-between p-3 bg-secondary-700 rounded-lg">
+                <div>
+                  <p className="font-medium">Mute on Entry</p>
+                  <p className="text-sm text-secondary-400">Mute participants when they join</p>
+                </div>
+                <button
+                  onClick={() => updateMeetingSettings({ muteOnEntry: !meeting?.settings.muteOnEntry })}
+                  className={`w-12 h-6 rounded-full transition-colors ${
+                    meeting?.settings.muteOnEntry ? 'bg-green-600' : 'bg-secondary-600'
+                  }`}
+                >
+                  <div className={`w-5 h-5 bg-white rounded-full transition-transform ${
+                    meeting?.settings.muteOnEntry ? 'translate-x-6' : 'translate-x-0.5'
+                  }`} />
+                </button>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setShowHostSettings(false)}
+              className="w-full mt-6 bg-secondary-700 hover:bg-secondary-600 py-2 rounded-lg transition-colors"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Main Meeting Area */}
       <div className="flex h-[calc(100vh-60px)]">
@@ -522,21 +861,28 @@ const MeetingPage: React.FC = () => {
                 </div>
 
                 <form onSubmit={sendMessage} className="p-4 border-t border-secondary-700 flex-shrink-0">
-                  <div className="flex space-x-2">
-                    <input
-                      type="text"
-                      value={newMessage}
-                      onChange={(e) => setNewMessage(e.target.value)}
-                      placeholder="Type a message..."
-                      className="flex-1 bg-secondary-700 border border-secondary-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-primary-500"
-                    />
-                    <button
-                      type="submit"
-                      className="bg-primary-600 hover:bg-primary-700 px-4 py-2 rounded-lg text-sm transition-colors"
-                    >
-                      Send
-                    </button>
-                  </div>
+                  {canChat ? (
+                    <div className="flex space-x-2">
+                      <input
+                        type="text"
+                        value={newMessage}
+                        onChange={(e) => setNewMessage(e.target.value)}
+                        placeholder="Type a message..."
+                        className="flex-1 bg-secondary-700 border border-secondary-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-primary-500"
+                      />
+                      <button
+                        type="submit"
+                        className="bg-primary-600 hover:bg-primary-700 px-4 py-2 rounded-lg text-sm transition-colors"
+                      >
+                        Send
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-center space-x-2 text-secondary-400 py-2">
+                      <LockClosedIcon className="w-4 h-4" />
+                      <span className="text-sm">Chat disabled by host</span>
+                    </div>
+                  )}
                 </form>
               </div>
             )}
@@ -622,22 +968,30 @@ const MeetingPage: React.FC = () => {
 
           <button
             onClick={toggleScreenShare}
+            disabled={!isHost && !isCoHost && meeting?.settings.enableScreenShare === false}
             className={`p-3 rounded-full transition-colors ${
               isScreenSharing 
                 ? 'bg-blue-600 hover:bg-blue-700' 
-                : 'bg-secondary-700 hover:bg-secondary-600'
+                : (!isHost && !isCoHost && meeting?.settings.enableScreenShare === false)
+                  ? 'bg-secondary-800 cursor-not-allowed opacity-50'
+                  : 'bg-secondary-700 hover:bg-secondary-600'
             }`}
+            title={(!isHost && !isCoHost && meeting?.settings.enableScreenShare === false) ? 'Screen share disabled by host' : 'Share screen'}
           >
             <ComputerDesktopIcon className="w-6 h-6" />
           </button>
 
           <button
             onClick={toggleRecording}
+            disabled={!isHost && !canRecord}
             className={`p-3 rounded-full transition-colors ${
               isRecording 
                 ? 'bg-red-600 hover:bg-red-700' 
-                : 'bg-secondary-700 hover:bg-secondary-600'
+                : (!isHost && !canRecord)
+                  ? 'bg-secondary-800 cursor-not-allowed opacity-50'
+                  : 'bg-secondary-700 hover:bg-secondary-600'
             }`}
+            title={(!isHost && !canRecord) ? 'Recording not allowed' : (isRecording ? 'Stop recording' : 'Start recording')}
           >
             {isRecording ? (
               <StopIcon className="w-6 h-6" />

@@ -8,7 +8,7 @@ import { apiService } from '../services/api';
 const JoinMeeting: React.FC = () => {
   const { meetingId } = useParams<{ meetingId?: string }>();
   const navigate = useNavigate();
-  const { login, isAuthenticated } = useAuth();
+  const { joinAsGuest, isAuthenticated } = useAuth();
 
   const [formData, setFormData] = useState({
     meetingId: meetingId || '',
@@ -56,8 +56,8 @@ const JoinMeeting: React.FC = () => {
     setError('');
 
     try {
-      // Join as guest
-      await login(formData.username, 'guest123');
+      // Join as guest using the joinAsGuest function from AuthContext
+      await joinAsGuest(formData.username);
       
       // Join meeting
       const response = await apiService.joinMeeting(formData.meetingId, requiresPassword ? { password } : undefined);

@@ -159,8 +159,10 @@ const meetingController = {
       // Update meeting status to ongoing if first participant joins
       if (meeting.status === 'scheduled') {
         meeting.status = 'ongoing';
-        await meeting.save();
       }
+      
+      // Save the meeting with updated participants
+      await meeting.save();
 
       res.json({
         success: true,
@@ -289,7 +291,7 @@ const meetingController = {
       const { meetingId } = req.params;
       const { settings } = req.body;
 
-      const meeting = await Meeting.findById(meetingId);
+      const meeting = await Meeting.findOne({ meetingId });
 
       if (!meeting) {
         return res.status(404).json({
@@ -309,10 +311,15 @@ const meetingController = {
       meeting.settings = { ...meeting.settings, ...settings };
       await meeting.save();
 
+      // Return populated meeting
+      const populatedMeeting = await Meeting.findOne({ meetingId })
+        .populate('host', 'username email avatar')
+        .populate('participants.user', 'username email avatar');
+
       res.json({
         success: true,
         message: 'Meeting settings updated successfully',
-        data: { meeting }
+        data: { meeting: populatedMeeting }
       });
     } catch (error) {
       console.error('Update meeting settings error:', error);
@@ -328,7 +335,7 @@ const meetingController = {
     try {
       const { meetingId } = req.params;
 
-      const meeting = await Meeting.findById(meetingId);
+      const meeting = await Meeting.findOne({ meetingId });
 
       if (!meeting) {
         return res.status(404).json({

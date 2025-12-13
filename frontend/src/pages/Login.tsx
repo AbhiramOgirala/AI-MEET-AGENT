@@ -40,17 +40,8 @@ const Login: React.FC = () => {
   };
 
   const handleGuestLogin = async () => {
-    setIsLoading(true);
-    try {
-      await login('guest@example.com', 'guest123');
-      // Navigation will be handled by AuthContext state update and PublicRoute redirect
-      console.log('Guest login completed, checking auth state...');
-    } catch (error) {
-      // Error is handled in AuthContext
-      console.log('Guest login failed:', error);
-    } finally {
-      setIsLoading(false);
-    }
+    // Redirect to join meeting page for guest access
+    window.location.href = '/join';
   };
 
   return (

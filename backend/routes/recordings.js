@@ -16,7 +16,15 @@ const storage = multer.diskStorage({
   },
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, `recording-${uniqueSuffix}.${file.mimetype.includes('audio') ? 'mp3' : 'mp4'}`);
+    // Get extension from original filename or determine from mimetype
+    let ext = path.extname(file.originalname).toLowerCase();
+    if (!ext) {
+      if (file.mimetype.includes('webm')) ext = '.webm';
+      else if (file.mimetype.includes('mp4')) ext = '.mp4';
+      else if (file.mimetype.includes('mp3') || file.mimetype.includes('mpeg')) ext = '.mp3';
+      else ext = '.webm';
+    }
+    cb(null, `recording-${uniqueSuffix}${ext}`);
   }
 });
 
@@ -26,11 +34,15 @@ const upload = multer({
     fileSize: 500 * 1024 * 1024 // 500MB limit
   },
   fileFilter: (req, file, cb) => {
-    const allowedTypes = /mp4|webm|mp3|wav/;
-    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-    const mimetype = allowedTypes.test(file.mimetype);
+    // Check file extension
+    const allowedExtensions = /\.(mp4|webm|mp3|wav)$/i;
+    const extValid = allowedExtensions.test(file.originalname);
+    
+    // Check mimetype
+    const allowedMimes = ['video/mp4', 'video/webm', 'audio/mp3', 'audio/mpeg', 'audio/wav', 'audio/webm'];
+    const mimeValid = allowedMimes.includes(file.mimetype);
 
-    if (mimetype && extname) {
+    if (extValid || mimeValid) {
       return cb(null, true);
     } else {
       cb(new Error('Invalid file type. Only MP4, WebM, MP3, and WAV files are allowed.'));

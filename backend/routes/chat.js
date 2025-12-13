@@ -11,8 +11,6 @@ const setSocketIO = (socketIO) => {
   io = socketIO;
 };
 
-module.exports = { router, setSocketIO };
-
 // Configure multer for file uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -69,10 +67,9 @@ router.post('/message', authenticateToken, async (req, res) => {
     }
 
     // Check if user is participant
-    // Temporarily disabled for debugging
-    const isParticipant = true; // meeting.participants.some(p => 
-      // p.user.toString() === req.userId.toString() && p.status === 'joined'
-    // );
+    const isParticipant = meeting.participants.some(p => 
+      p.user && p.user._id && p.user._id.toString() === req.userId.toString()
+    );
 
     if (!isParticipant) {
       return res.status(403).json({
@@ -147,10 +144,9 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req, res
     }
 
     // Check if user is participant
-    // Temporarily disabled for debugging
-    const isParticipant = true; // meeting.participants.some(p => 
-      // p.user.toString() === req.userId.toString() && p.status === 'joined'
-    // );
+    const isParticipant = meeting.participants.some(p => 
+      p.user && p.user._id && p.user._id.toString() === req.userId.toString()
+    );
 
     if (!isParticipant) {
       return res.status(403).json({
@@ -217,11 +213,10 @@ router.get('/:meetingId', authenticateToken, async (req, res) => {
       });
     }
 
-    // Check if user is participant
-    // Temporarily disabled for debugging
-    const isParticipant = true; // meeting.participants.some(p => 
-      // p.user.toString() === req.userId.toString() && p.status === 'joined'
-    // );
+    // Check if user is participant (allow if they were ever a participant)
+    const isParticipant = meeting.participants.some(p => 
+      p.user && p.user._id && p.user._id.toString() === req.userId.toString()
+    );
 
     if (!isParticipant) {
       return res.status(403).json({
