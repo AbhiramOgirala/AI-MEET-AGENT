@@ -18,6 +18,7 @@ import {
   ShareIcon,
   Cog6ToothIcon,
   LockClosedIcon,
+  XMarkIcon,
 } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
 import { apiService } from '../services/api';
@@ -48,6 +49,13 @@ const MeetingPage: React.FC = () => {
   const [localStreamReady, setLocalStreamReady] = useState(false);
   const [showMeetingInfo, setShowMeetingInfo] = useState(false);
   const [showHostSettings, setShowHostSettings] = useState(false);
+  const [notifications, setNotifications] = useState<Array<{
+    id: string;
+    type: 'join' | 'hand' | 'message';
+    message: string;
+    timestamp: Date;
+  }>>([]);
+  const [unreadMessages, setUnreadMessages] = useState(0);
 
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const screenVideoRef = useRef<HTMLVideoElement>(null);
@@ -106,6 +114,27 @@ const MeetingPage: React.FC = () => {
     }
   }, [meetingId, navigate]);
 
+  // Notification helpers - defined before setupSocketListeners to avoid reference error
+  const addNotification = useCallback((type: 'join' | 'hand' | 'message', message: string) => {
+    const notification = {
+      id: `${Date.now()}-${Math.random()}`,
+      type,
+      message,
+      timestamp: new Date(),
+    };
+    
+    setNotifications(prev => [...prev.slice(-4), notification]); // Keep last 5 notifications
+    
+    // Auto-remove notification after 5 seconds
+    setTimeout(() => {
+      setNotifications(prev => prev.filter(n => n.id !== notification.id));
+    }, 5000);
+  }, []);
+
+  const removeNotification = (id: string) => {
+    setNotifications(prev => prev.filter(n => n.id !== id));
+  };
+
   const setupSocketListeners = useCallback(() => {
     // WebRTC signaling
     socketService.onOffer((data) => {
@@ -124,6 +153,9 @@ const MeetingPage: React.FC = () => {
       console.log('User joined:', userId);
       // Create peer connection for new user
       webrtcService.createOffer(userId);
+      
+      // Add notification for new participant
+      addNotification('join', `A new participant joined the meeting`);
     });
 
     socketService.onUserLeft((userId: string) => {
@@ -131,43 +163,133 @@ const MeetingPage: React.FC = () => {
       webrtcService.cleanupPeerConnection(userId);
     });
 
-    // Meeting controls
-    socketService.onAudioToggled((data) => {
-      // Update UI for remote user's audio state
+    // Meeting controls - update participant media states
+    socketService.onAudioToggled((data: { audioEnabled: boolean; userId: string }) => {
+      console.log('Audio toggled:', data);
+      if (!data.userId) return; // Ignore if no userId
+      // Update the meeting participants' media state
+      setMeeting(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          participants: prev.participants.map(p => {
+            if (p.user._id === data.userId) {
+              return {
+                ...p,
+                mediaState: {
+                  ...p.mediaState,
+                  audioEnabled: data.audioEnabled
+                }
+              };
+            }
+            return p;
+          })
+        };
+      });
     });
 
-    socketService.onVideoToggled((data) => {
-      // Update UI for remote user's video state
+    socketService.onVideoToggled((data: { videoEnabled: boolean; userId: string }) => {
+      console.log('Video toggled:', data);
+      // Update the meeting participants' media state
+      setMeeting(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          participants: prev.participants.map(p => {
+            if (p.user._id === data.userId) {
+              return {
+                ...p,
+                mediaState: {
+                  ...p.mediaState,
+                  videoEnabled: data.videoEnabled
+                }
+              };
+            }
+            return p;
+          })
+        };
+      });
     });
 
-    socketService.onScreenShare((data) => {
-      // Handle screen sharing updates
+    socketService.onScreenShare((data: { active: boolean; userId: string }) => {
+      console.log('Screen share:', data);
+      // Update the meeting participants' media state
+      setMeeting(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          participants: prev.participants.map(p => {
+            if (p.user._id === data.userId) {
+              return {
+                ...p,
+                mediaState: {
+                  ...p.mediaState,
+                  screenSharing: data.active
+                }
+              };
+            }
+            return p;
+          })
+        };
+      });
     });
 
     // Chat
     socketService.onChatMessage((data) => {
       setChatMessages(prev => [...prev, data]);
+      
+      // Add notification if chat panel is closed and message is from someone else
+      if (data.sender?._id !== user?._id) {
+        addNotification('message', `${data.sender?.username || 'Someone'}: ${data.message.substring(0, 50)}${data.message.length > 50 ? '...' : ''}`);
+        setUnreadMessages(prev => prev + 1);
+      }
     });
 
     // Host controls
-    socketService.onMutedByHost((data) => {
+    socketService.onMutedByHost(() => {
       setIsAudioEnabled(false);
       webrtcService.toggleAudio(false);
+      toast.error('You have been muted by the host');
     });
 
-    socketService.onRemovedFromMeeting((data) => {
+    socketService.onRemovedFromMeeting(() => {
+      toast.error('You have been removed from the meeting');
       navigate('/dashboard');
     });
 
     // Interactions
-    socketService.onHandRaised((data) => {
-      // Update participants list
+    socketService.onHandRaised((data: { raised: boolean; userId: string; username?: string }) => {
+      console.log('Hand raised:', data);
+      // Update the meeting participants' media state
+      setMeeting(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          participants: prev.participants.map(p => {
+            if (p.user._id === data.userId) {
+              return {
+                ...p,
+                mediaState: {
+                  ...p.mediaState,
+                  handRaised: data.raised
+                }
+              };
+            }
+            return p;
+          })
+        };
+      });
+      
+      // Add notification for raised hand
+      if (data.raised && data.userId !== user?._id) {
+        addNotification('hand', `${data.username || 'Someone'} raised their hand`);
+      }
     });
 
-    socketService.onReaction((data) => {
+    socketService.onReaction(() => {
       // Show reaction animation
     });
-  }, [navigate]);
+  }, [navigate, user?._id, addNotification]);
 
   useEffect(() => {
     if (!meetingId) return;
@@ -267,8 +389,24 @@ const MeetingPage: React.FC = () => {
     setIsAudioEnabled(newState);
     webrtcService.toggleAudio(newState);
     
-    if (meeting) {
-      socketService.toggleAudio(meeting.meetingId, newState);
+    if (meeting && user) {
+      socketService.toggleAudio(meeting.meetingId, newState, user._id);
+      // Also update local participant state
+      setMeeting(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          participants: prev.participants.map(p => {
+            if (p.user._id === user._id) {
+              return {
+                ...p,
+                mediaState: { ...p.mediaState, audioEnabled: newState }
+              };
+            }
+            return p;
+          })
+        };
+      });
     }
   };
 
@@ -277,8 +415,24 @@ const MeetingPage: React.FC = () => {
     setIsVideoEnabled(newState);
     webrtcService.toggleVideo(newState);
     
-    if (meeting) {
-      socketService.toggleVideo(meeting.meetingId, newState);
+    if (meeting && user) {
+      socketService.toggleVideo(meeting.meetingId, newState, user._id);
+      // Also update local participant state
+      setMeeting(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          participants: prev.participants.map(p => {
+            if (p.user._id === user._id) {
+              return {
+                ...p,
+                mediaState: { ...p.mediaState, videoEnabled: newState }
+              };
+            }
+            return p;
+          })
+        };
+      });
     }
   };
 
@@ -288,8 +442,24 @@ const MeetingPage: React.FC = () => {
         await webrtcService.startScreenShare();
         setIsScreenSharing(true);
         
-        if (meeting) {
-          socketService.startScreenShare(meeting.meetingId, 'screen-stream-id');
+        if (meeting && user) {
+          socketService.startScreenShare(meeting.meetingId, 'screen-stream-id', user._id);
+          // Update local participant state
+          setMeeting(prev => {
+            if (!prev) return prev;
+            return {
+              ...prev,
+              participants: prev.participants.map(p => {
+                if (p.user._id === user._id) {
+                  return {
+                    ...p,
+                    mediaState: { ...p.mediaState, screenSharing: true }
+                  };
+                }
+                return p;
+              })
+            };
+          });
         }
       } catch (error) {
         console.error('Error starting screen share:', error);
@@ -297,6 +467,26 @@ const MeetingPage: React.FC = () => {
     } else {
       webrtcService.stopScreenShare();
       setIsScreenSharing(false);
+      
+      if (meeting && user) {
+        socketService.stopScreenShare(meeting.meetingId, user._id);
+        // Update local participant state
+        setMeeting(prev => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            participants: prev.participants.map(p => {
+              if (p.user._id === user._id) {
+                return {
+                  ...p,
+                  mediaState: { ...p.mediaState, screenSharing: false }
+                };
+              }
+              return p;
+            })
+          };
+        });
+      }
     }
   };
 
@@ -427,8 +617,24 @@ const MeetingPage: React.FC = () => {
     const newState = !isHandRaised;
     setIsHandRaised(newState);
     
-    if (meeting) {
-      socketService.raiseHand(meeting.meetingId, newState);
+    if (meeting && user) {
+      socketService.raiseHand(meeting.meetingId, newState, user._id, user.username);
+      // Also update local participant state
+      setMeeting(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          participants: prev.participants.map(p => {
+            if (p.user._id === user._id) {
+              return {
+                ...p,
+                mediaState: { ...p.mediaState, handRaised: newState }
+              };
+            }
+            return p;
+          })
+        };
+      });
     }
   };
 
@@ -475,6 +681,13 @@ const MeetingPage: React.FC = () => {
       toast.error('Failed to send message');
     }
   };
+
+  // Clear unread messages when chat is opened
+  useEffect(() => {
+    if (showChat) {
+      setUnreadMessages(0);
+    }
+  }, [showChat]);
 
   // Host settings handlers
   const updateMeetingSettings = async (newSettings: Partial<Meeting['settings']>) => {
@@ -581,11 +794,16 @@ const MeetingPage: React.FC = () => {
             </button>
             <button
               onClick={() => setShowChat(!showChat)}
-              className={`p-2 rounded-lg transition-colors ${
+              className={`p-2 rounded-lg transition-colors relative ${
                 showChat ? 'bg-primary-600' : 'hover:bg-secondary-700'
               }`}
             >
               <ChatBubbleLeftRightIcon className="w-5 h-5" />
+              {unreadMessages > 0 && !showChat && (
+                <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center">
+                  {unreadMessages > 9 ? '9+' : unreadMessages}
+                </span>
+              )}
             </button>
             <button
               onClick={() => setShowParticipants(!showParticipants)}
@@ -604,6 +822,40 @@ const MeetingPage: React.FC = () => {
           </div>
         </div>
       </header>
+
+      {/* Notifications Panel */}
+      {notifications.length > 0 && (
+        <div className="fixed top-16 right-4 z-40 space-y-2 max-w-sm">
+          {notifications.map((notification) => (
+            <div
+              key={notification.id}
+              className={`flex items-start space-x-3 p-3 rounded-lg shadow-lg animate-slide-up ${
+                notification.type === 'join' ? 'bg-green-600' :
+                notification.type === 'hand' ? 'bg-yellow-600' :
+                'bg-primary-600'
+              }`}
+            >
+              <div className="flex-shrink-0">
+                {notification.type === 'join' && <UsersIcon className="w-5 h-5" />}
+                {notification.type === 'hand' && <HandRaisedIcon className="w-5 h-5" />}
+                {notification.type === 'message' && <ChatBubbleLeftRightIcon className="w-5 h-5" />}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium truncate">{notification.message}</p>
+                <p className="text-xs opacity-75">
+                  {notification.timestamp.toLocaleTimeString()}
+                </p>
+              </div>
+              <button
+                onClick={() => removeNotification(notification.id)}
+                className="flex-shrink-0 hover:bg-white/20 rounded p-1 transition-colors"
+              >
+                <XMarkIcon className="w-4 h-4" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Meeting Info Modal */}
       {showMeetingInfo && (

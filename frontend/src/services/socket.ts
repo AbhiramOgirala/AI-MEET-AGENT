@@ -76,27 +76,27 @@ class SocketService {
   }
 
   // Meeting controls
-  toggleAudio(meetingId: string, enabled: boolean): void {
+  toggleAudio(meetingId: string, enabled: boolean, userId?: string): void {
     if (this.socket) {
-      this.socket.emit(SocketEvents.TOGGLE_AUDIO, { meetingId, enabled });
+      this.socket.emit(SocketEvents.TOGGLE_AUDIO, { meetingId, audioEnabled: enabled, userId });
     }
   }
 
-  toggleVideo(meetingId: string, enabled: boolean): void {
+  toggleVideo(meetingId: string, enabled: boolean, userId?: string): void {
     if (this.socket) {
-      this.socket.emit(SocketEvents.TOGGLE_VIDEO, { meetingId, enabled });
+      this.socket.emit(SocketEvents.TOGGLE_VIDEO, { meetingId, videoEnabled: enabled, userId });
     }
   }
 
-  startScreenShare(meetingId: string, streamId: string): void {
+  startScreenShare(meetingId: string, streamId: string, userId?: string): void {
     if (this.socket) {
-      this.socket.emit(SocketEvents.SCREEN_SHARE, { meetingId, streamId, active: true });
+      this.socket.emit(SocketEvents.SCREEN_SHARE, { meetingId, streamId, active: true, userId });
     }
   }
 
-  stopScreenShare(meetingId: string): void {
+  stopScreenShare(meetingId: string, userId?: string): void {
     if (this.socket) {
-      this.socket.emit(SocketEvents.SCREEN_SHARE, { meetingId, active: false });
+      this.socket.emit(SocketEvents.SCREEN_SHARE, { meetingId, active: false, userId });
     }
   }
 
@@ -121,9 +121,9 @@ class SocketService {
   }
 
   // Interactions
-  raiseHand(meetingId: string, raised: boolean): void {
+  raiseHand(meetingId: string, raised: boolean, userId?: string, username?: string): void {
     if (this.socket) {
-      this.socket.emit(SocketEvents.RAISE_HAND, { meetingId, raised });
+      this.socket.emit(SocketEvents.RAISE_HAND, { meetingId, raised, userId, username });
     }
   }
 
