@@ -60,6 +60,7 @@ const meetingsRouter = require('./routes/meetings');
 const usersRouter = require('./routes/users');
 const { router: chatRouter, setSocketIO } = require('./routes/chat');
 const recordingsRouter = require('./routes/recordings');
+const meetingMinutesRouter = require('./routes/meetingMinutes');
 
 // Set up socket.io for chat routes
 setSocketIO(io);
@@ -69,6 +70,7 @@ app.use('/api/meetings', meetingsRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/chat', chatRouter);
 app.use('/api/recordings', recordingsRouter);
+app.use('/api/meeting-minutes', meetingMinutesRouter);
 
 // Socket.io connection handling
 io.on('connection', (socket) => {

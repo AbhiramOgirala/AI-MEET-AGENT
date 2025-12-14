@@ -650,6 +650,44 @@ const MeetingPage: React.FC = () => {
     }
   };
 
+  const endMeeting = async () => {
+    if (!meeting || !isHost) return;
+    
+    const confirmed = window.confirm(
+      'Are you sure you want to end this meeting for everyone? Meeting minutes will be generated and sent to all participants.'
+    );
+    
+    if (!confirmed) return;
+
+    try {
+      toast.loading('Ending meeting and generating minutes...', { id: 'end-meeting' });
+      
+      // End the meeting
+      await apiService.endMeeting(meeting.meetingId);
+      
+      // Generate meeting minutes with transcripts (if available)
+      try {
+        const transcriptsData = subtitles.map(s => ({
+          speakerName: s.speaker,
+          startTime: s.timestamp,
+          text: s.text
+        }));
+        
+        await apiService.generateMeetingMinutes(meeting.meetingId, transcriptsData);
+        toast.success('Meeting ended! Minutes have been generated and sent to participants.', { id: 'end-meeting' });
+      } catch (minutesError) {
+        console.error('Error generating minutes:', minutesError);
+        toast.success('Meeting ended! (Minutes generation may have failed)', { id: 'end-meeting' });
+      }
+      
+      cleanup();
+      navigate('/dashboard');
+    } catch (error) {
+      console.error('Error ending meeting:', error);
+      toast.error('Failed to end meeting', { id: 'end-meeting' });
+    }
+  };
+
   const cleanup = () => {
     webrtcService.cleanup();
     socketService.disconnect();
@@ -1263,13 +1301,24 @@ const MeetingPage: React.FC = () => {
             <HandRaisedIcon className="w-6 h-6" />
           </button>
 
-          <button
-            onClick={leaveMeeting}
-            className="bg-red-600 hover:bg-red-700 px-6 py-3 rounded-full transition-colors flex items-center space-x-2"
-          >
-            <PhoneXMarkIcon className="w-6 h-6" />
-            <span>Leave</span>
-          </button>
+          {isHost ? (
+            <button
+              onClick={endMeeting}
+              className="bg-red-600 hover:bg-red-700 px-6 py-3 rounded-full transition-colors flex items-center space-x-2"
+              title="End meeting for everyone"
+            >
+              <PhoneXMarkIcon className="w-6 h-6" />
+              <span>End Meeting</span>
+            </button>
+          ) : (
+            <button
+              onClick={leaveMeeting}
+              className="bg-red-600 hover:bg-red-700 px-6 py-3 rounded-full transition-colors flex items-center space-x-2"
+            >
+              <PhoneXMarkIcon className="w-6 h-6" />
+              <span>Leave</span>
+            </button>
+          )}
         </div>
       </div>
     </div>

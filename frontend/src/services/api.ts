@@ -189,6 +189,27 @@ class ApiService {
     const response = await this.api.get('/users/profile');
     return response.data;
   }
+
+  // Meeting Minutes endpoints
+  async generateMeetingMinutes(meetingId: string, transcripts?: any[]): Promise<ApiResponse<{ minutes: any }>> {
+    const response = await this.api.post(`/meeting-minutes/${meetingId}/generate`, { transcripts });
+    return response.data;
+  }
+
+  async getMeetingMinutes(meetingId: string): Promise<ApiResponse<{ minutes: any }>> {
+    const response = await this.api.get(`/meeting-minutes/${meetingId}`);
+    return response.data;
+  }
+
+  async getUserMeetingMinutes(page = 1, limit = 10): Promise<ApiResponse<{ minutes: any[]; pagination: any }>> {
+    const response = await this.api.get('/meeting-minutes', { params: { page, limit } });
+    return response.data;
+  }
+
+  async resendMeetingMinutesEmail(meetingId: string, email?: string): Promise<ApiResponse<{ results: any[] }>> {
+    const response = await this.api.post(`/meeting-minutes/${meetingId}/resend-email`, { email });
+    return response.data;
+  }
 }
 
 export const apiService = new ApiService();
