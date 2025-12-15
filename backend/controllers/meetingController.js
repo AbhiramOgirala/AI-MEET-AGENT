@@ -1,6 +1,7 @@
 const Meeting = require('../models/Meeting');
 const User = require('../models/User');
 const { v4: uuidv4 } = require('uuid');
+const schedulerService = require('../services/schedulerService');
 
 const meetingController = {
   // Create a new meeting
@@ -367,6 +368,125 @@ const meetingController = {
       });
     } catch (error) {
       console.error('End meeting error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Internal server error'
+      });
+    }
+  },
+
+  // Schedule a meeting for future
+  async scheduleMeeting(req, res) {
+    try {
+      const { title, description, scheduledFor, duration, settings } = req.body;
+      
+      // Validate scheduled time is in the future
+      const scheduledDate = new Date(scheduledFor);
+      if (scheduledDate <= new Date()) {
+        return res.status(400).json({
+          success: false,
+          message: 'Scheduled time must be in the future'
+        });
+      }
+
+      // Generate a unique meeting ID
+      const generateMeetingId = () => {
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+        let result = '';
+        for (let i = 0; i < 9; i++) {
+          if (i === 3 || i === 6) result += '-';
+          result += chars.charAt(Math.floor(Math.random() * chars.length));
+        }
+        return result;
+      };
+
+      // Get user email for reminders
+      const user = await User.findById(req.userId);
+      
+      const meeting = new Meeting({
+        title,
+        description,
+        host: req.userId,
+        meetingId: generateMeetingId(),
+        scheduledFor: scheduledDate,
+        duration: duration || 60,
+        status: 'scheduled',
+        settings: settings || {}
+      });
+
+      // Add host as first participant (but not joined yet)
+      meeting.participants.push({
+        user: req.userId,
+        role: 'host',
+        status: 'invited'
+      });
+
+      await meeting.save();
+
+      // Schedule email reminders (1hr, 30min, 15min, 5min before)
+      schedulerService.scheduleReminders(meeting, user);
+
+      // Update user statistics
+      await User.findByIdAndUpdate(req.userId, {
+        $inc: { 'statistics.meetingsHosted': 1, 'statistics.totalMeetings': 1 }
+      });
+
+      res.status(201).json({
+        success: true,
+        message: 'Meeting scheduled successfully',
+        data: { meeting }
+      });
+    } catch (error) {
+      console.error('Schedule meeting error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Internal server error'
+      });
+    }
+  },
+
+  // Cancel scheduled meeting (host only)
+  async cancelMeeting(req, res) {
+    try {
+      const { meetingId } = req.params;
+
+      const meeting = await Meeting.findOne({ meetingId });
+
+      if (!meeting) {
+        return res.status(404).json({
+          success: false,
+          message: 'Meeting not found'
+        });
+      }
+
+      // Check if user is host
+      if (meeting.host.toString() !== req.userId.toString()) {
+        return res.status(403).json({
+          success: false,
+          message: 'Only host can cancel meeting'
+        });
+      }
+
+      // Can only cancel scheduled meetings
+      if (meeting.status !== 'scheduled') {
+        return res.status(400).json({
+          success: false,
+          message: 'Can only cancel scheduled meetings'
+        });
+      }
+
+      meeting.status = 'cancelled';
+      await meeting.save();
+
+      // Cancel scheduled reminders
+      schedulerService.cancelReminders(meetingId);
+
+      res.json({
+        success: true,
+        message: 'Meeting cancelled successfully'
+      });
+    } catch (error) {
+      console.error('Cancel meeting error:', error);
       res.status(500).json({
         success: false,
         message: 'Internal server error'

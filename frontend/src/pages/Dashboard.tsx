@@ -8,9 +8,12 @@ import {
   UsersIcon,
   PlusIcon,
   PlayIcon,
-  ArrowRightOnRectangleIcon,
+  ArrowLeftStartOnRectangleIcon,
   UserCircleIcon,
+  XMarkIcon,
+  TrashIcon,
 } from '@heroicons/react/24/outline';
+import toast from 'react-hot-toast';
 import { useAuth } from '../contexts/AuthContext';
 import { apiService } from '../services/api';
 import { Meeting } from '../types';
@@ -21,10 +24,18 @@ const Dashboard: React.FC = () => {
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [newMeeting, setNewMeeting] = useState({
     title: '',
     description: '',
     duration: 60,
+  });
+  const [scheduledMeeting, setScheduledMeeting] = useState({
+    title: '',
+    description: '',
+    duration: 60,
+    date: '',
+    time: '',
   });
 
   useEffect(() => {
@@ -62,9 +73,67 @@ const Dashboard: React.FC = () => {
     navigate(`/meeting/${meetingId}`);
   };
 
+  const handleScheduleMeeting = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!scheduledMeeting.date || !scheduledMeeting.time) {
+      toast.error('Please select date and time');
+      return;
+    }
+
+    const scheduledFor = new Date(`${scheduledMeeting.date}T${scheduledMeeting.time}`);
+    
+    if (scheduledFor <= new Date()) {
+      toast.error('Please select a future date and time');
+      return;
+    }
+
+    try {
+      const response = await apiService.scheduleMeeting({
+        title: scheduledMeeting.title,
+        description: scheduledMeeting.description,
+        duration: scheduledMeeting.duration,
+        scheduledFor: scheduledFor.toISOString(),
+      });
+      
+      if (response.success) {
+        toast.success('Meeting scheduled! You will receive email reminders.');
+        setShowScheduleModal(false);
+        setScheduledMeeting({ title: '', description: '', duration: 60, date: '', time: '' });
+        fetchMeetings();
+      }
+    } catch (error) {
+      console.error('Error scheduling meeting:', error);
+      toast.error('Failed to schedule meeting');
+    }
+  };
+
+  const handleCancelMeeting = async (meetingId: string) => {
+    if (!window.confirm('Are you sure you want to cancel this scheduled meeting?')) {
+      return;
+    }
+
+    try {
+      const response = await apiService.cancelMeeting(meetingId);
+      if (response.success) {
+        toast.success('Meeting cancelled');
+        fetchMeetings();
+      }
+    } catch (error) {
+      console.error('Error cancelling meeting:', error);
+      toast.error('Failed to cancel meeting');
+    }
+  };
+
   const handleLogout = () => {
     logout();
     navigate('/login');
+  };
+
+  // Get minimum date (today) for date picker
+  const getMinDate = () => {
+    const today = new Date();
+    return today.toISOString().split('T')[0];
   };
 
   const formatTime = (dateString: string) => {
@@ -130,7 +199,7 @@ const Dashboard: React.FC = () => {
                 onClick={handleLogout}
                 className="btn-ghost p-2 rounded-lg"
               >
-                <ArrowRightOnRectangleIcon className="w-5 h-5" />
+                <ArrowLeftStartOnRectangleIcon className="w-5 h-5" />
               </button>
             </div>
           </div>
@@ -177,11 +246,16 @@ const Dashboard: React.FC = () => {
             <p className="text-primary-600 text-sm">Enter meeting code</p>
           </motion.button>
 
-          <div className="bg-gradient-to-r from-accent-600 to-accent-700 text-white p-6 rounded-xl shadow-lg">
+          <motion.button
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            onClick={() => setShowScheduleModal(true)}
+            className="bg-gradient-to-r from-accent-600 to-accent-700 text-white p-6 rounded-xl shadow-lg hover:shadow-xl transition-all text-left"
+          >
             <CalendarIcon className="w-8 h-8 mb-3" />
             <h3 className="text-lg font-semibold mb-1">Schedule</h3>
             <p className="text-accent-100 text-sm">Plan future meetings</p>
-          </div>
+          </motion.button>
         </div>
 
         {/* Statistics */}
@@ -269,12 +343,23 @@ const Dashboard: React.FC = () => {
                       </p>
                       <p className="text-sm text-secondary-500">{meeting.duration} minutes</p>
                     </div>
-                    <button
-                      onClick={() => handleJoinMeeting(meeting.meetingId)}
-                      className="btn-secondary px-4 py-2 text-sm"
-                    >
-                      Join
-                    </button>
+                    <div className="flex items-center space-x-2">
+                      <button
+                        onClick={() => handleJoinMeeting(meeting.meetingId)}
+                        className="btn-secondary px-4 py-2 text-sm"
+                      >
+                        Join
+                      </button>
+                      {meeting.host && (typeof meeting.host === 'string' ? meeting.host === user?._id : meeting.host._id === user?._id) && (
+                        <button
+                          onClick={() => handleCancelMeeting(meeting.meetingId)}
+                          className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                          title="Cancel meeting"
+                        >
+                          <TrashIcon className="w-5 h-5" />
+                        </button>
+                      )}
+                    </div>
                   </motion.div>
                 ))}
               </div>
@@ -398,6 +483,126 @@ const Dashboard: React.FC = () => {
                   className="btn-primary flex-1"
                 >
                   Create Meeting
+                </button>
+              </div>
+            </form>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Schedule Meeting Modal */}
+      {showScheduleModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white rounded-xl p-6 w-full max-w-md mx-4"
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-bold text-secondary-900">Schedule Meeting</h3>
+              <button
+                onClick={() => setShowScheduleModal(false)}
+                className="p-1 hover:bg-secondary-100 rounded-lg transition-colors"
+              >
+                <XMarkIcon className="w-5 h-5 text-secondary-500" />
+              </button>
+            </div>
+            
+            <form onSubmit={handleScheduleMeeting} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-secondary-700 mb-1">
+                  Meeting Title
+                </label>
+                <input
+                  type="text"
+                  value={scheduledMeeting.title}
+                  onChange={(e) => setScheduledMeeting({ ...scheduledMeeting, title: e.target.value })}
+                  className="input"
+                  placeholder="Enter meeting title"
+                  required
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-secondary-700 mb-1">
+                  Description (optional)
+                </label>
+                <textarea
+                  value={scheduledMeeting.description}
+                  onChange={(e) => setScheduledMeeting({ ...scheduledMeeting, description: e.target.value })}
+                  className="input"
+                  rows={2}
+                  placeholder="Add a description"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-secondary-700 mb-1">
+                    <CalendarIcon className="w-4 h-4 inline mr-1" />
+                    Date
+                  </label>
+                  <input
+                    type="date"
+                    value={scheduledMeeting.date}
+                    onChange={(e) => setScheduledMeeting({ ...scheduledMeeting, date: e.target.value })}
+                    min={getMinDate()}
+                    className="input"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-secondary-700 mb-1">
+                    <ClockIcon className="w-4 h-4 inline mr-1" />
+                    Time
+                  </label>
+                  <input
+                    type="time"
+                    value={scheduledMeeting.time}
+                    onChange={(e) => setScheduledMeeting({ ...scheduledMeeting, time: e.target.value })}
+                    className="input"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-secondary-700 mb-1">
+                  Duration
+                </label>
+                <select
+                  value={scheduledMeeting.duration}
+                  onChange={(e) => setScheduledMeeting({ ...scheduledMeeting, duration: parseInt(e.target.value) })}
+                  className="input"
+                >
+                  <option value={15}>15 minutes</option>
+                  <option value={30}>30 minutes</option>
+                  <option value={45}>45 minutes</option>
+                  <option value={60}>1 hour</option>
+                  <option value={90}>1.5 hours</option>
+                  <option value={120}>2 hours</option>
+                </select>
+              </div>
+
+              <div className="bg-primary-50 border border-primary-200 rounded-lg p-3">
+                <p className="text-sm text-primary-700">
+                  <strong>📧 Email Reminders:</strong> You'll receive reminders at 1 hour, 30 min, 15 min, and 5 min before the meeting.
+                </p>
+              </div>
+
+              <div className="flex space-x-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowScheduleModal(false)}
+                  className="btn-secondary flex-1"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn-primary flex-1"
+                >
+                  Schedule Meeting
                 </button>
               </div>
             </form>

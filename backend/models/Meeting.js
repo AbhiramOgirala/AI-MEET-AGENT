@@ -69,7 +69,7 @@ const meetingSchema = new mongoose.Schema({
     },
     status: {
       type: String,
-      enum: ['joined', 'left', 'removed'],
+      enum: ['invited', 'joined', 'left', 'removed'],
       default: 'joined'
     },
     permissions: {

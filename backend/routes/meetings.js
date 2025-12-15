@@ -6,6 +6,9 @@ const { authenticateToken } = require('../middleware/auth');
 // Create a new meeting
 router.post('/', authenticateToken, meetingController.createMeeting);
 
+// Schedule a meeting
+router.post('/schedule', authenticateToken, meetingController.scheduleMeeting);
+
 // Get meeting by ID
 router.get('/:meetingId', authenticateToken, meetingController.getMeeting);
 
@@ -23,5 +26,8 @@ router.put('/:meetingId/settings', authenticateToken, meetingController.updateMe
 
 // End meeting (host only)
 router.post('/:meetingId/end', authenticateToken, meetingController.endMeeting);
+
+// Cancel scheduled meeting (host only)
+router.post('/:meetingId/cancel', authenticateToken, meetingController.cancelMeeting);
 
 module.exports = router;

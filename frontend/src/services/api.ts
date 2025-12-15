@@ -126,6 +126,21 @@ class ApiService {
     return response.data;
   }
 
+  async scheduleMeeting(meetingData: {
+    title: string;
+    description?: string;
+    duration: number;
+    scheduledFor: string;
+  }): Promise<ApiResponse<{ meeting: Meeting }>> {
+    const response = await this.api.post('/meetings/schedule', meetingData);
+    return response.data;
+  }
+
+  async cancelMeeting(meetingId: string): Promise<ApiResponse> {
+    const response = await this.api.post(`/meetings/${meetingId}/cancel`);
+    return response.data;
+  }
+
   // Chat endpoints
   async sendMessage(meetingId: string, message: string, type: 'text' | 'file' = 'text'): Promise<ApiResponse<{ message: any }>> {
     const response = await this.api.post('/chat/message', { meetingId, message, type });
