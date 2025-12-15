@@ -3,6 +3,7 @@ const Meeting = require('../models/Meeting');
 const User = require('../models/User');
 const geminiService = require('../services/geminiService');
 const emailService = require('../services/emailService');
+const queueService = require('../services/queueService');
 
 const meetingMinutesController = {
   // Generate meeting minutes after meeting ends
@@ -30,11 +31,12 @@ const meetingMinutesController = {
         });
       }
 
-      // Check if minutes already exist
+      // Check if minutes already exist - return existing if completed
       let existingMinutes = await MeetingMinutes.findOne({ meetingId });
       if (existingMinutes && existingMinutes.status === 'completed') {
-        return res.status(400).json({
-          success: false,
+        // Return existing minutes as success instead of error
+        return res.json({
+          success: true,
           message: 'Meeting minutes already generated',
           data: { minutes: existingMinutes }
         });
@@ -111,17 +113,25 @@ const meetingMinutesController = {
 
         await meetingMinutes.save();
 
-        // Send email to all participants
+        // Send email to all participants via queue
         const recipients = attendees.filter(a => a.email);
         if (recipients.length > 0) {
-          const emailResults = await emailService.sendMeetingMinutes(meetingMinutes, recipients);
+          // Queue emails for each recipient
+          for (const recipient of recipients) {
+            await queueService.addEmailJob('meeting-minutes', {
+              meetingId: meeting.meetingId,
+              recipientEmail: recipient.email
+            });
+          }
           
-          meetingMinutes.emailDelivery = {
+          // Refetch document to avoid version conflict
+          const updatedMinutes = await MeetingMinutes.findById(meetingMinutes._id);
+          updatedMinutes.emailDelivery = {
             sent: true,
             sentAt: new Date(),
-            recipients: emailResults
+            recipients: recipients.map(r => ({ email: r.email, status: 'queued' }))
           };
-          await meetingMinutes.save();
+          await updatedMinutes.save();
         }
 
         res.json({

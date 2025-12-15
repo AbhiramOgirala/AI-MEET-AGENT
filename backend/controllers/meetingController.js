@@ -1,7 +1,7 @@
 const Meeting = require('../models/Meeting');
 const User = require('../models/User');
 const { v4: uuidv4 } = require('uuid');
-const schedulerService = require('../services/schedulerService');
+const queueService = require('../services/queueService');
 
 const meetingController = {
   // Create a new meeting
@@ -423,8 +423,8 @@ const meetingController = {
 
       await meeting.save();
 
-      // Schedule email reminders (1hr, 30min, 15min, 5min before)
-      schedulerService.scheduleReminders(meeting, user);
+      // Schedule email reminders (1hr, 30min, 15min, 5min before) using Redis queue
+      await queueService.scheduleReminders(meeting, user);
 
       // Update user statistics
       await User.findByIdAndUpdate(req.userId, {
@@ -478,8 +478,8 @@ const meetingController = {
       meeting.status = 'cancelled';
       await meeting.save();
 
-      // Cancel scheduled reminders
-      schedulerService.cancelReminders(meetingId);
+      // Cancel scheduled reminders from Redis queue
+      await queueService.cancelReminders(meetingId);
 
       res.json({
         success: true,

@@ -319,57 +319,75 @@ const MeetingPage: React.FC = () => {
     }
   }, [isScreenSharing]);
 
-  // Speech Recognition Effect
+  // Speech Recognition Effect - Always active for transcript capture (for MOM generation)
   useEffect(() => {
-    if (showSubtitles && !recognitionRef.current) {
-      // Initialize speech recognition
-      if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-        const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-        const recognition = new SpeechRecognition();
-        
-        recognition.continuous = true;
-        recognition.interimResults = true;
-        recognition.lang = 'en-US';
+    // Start transcription automatically when meeting is loaded
+    if (!meeting || recognitionRef.current) return;
+    
+    // Initialize speech recognition
+    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      const recognition = new SpeechRecognition();
+      
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = 'en-US';
 
-        recognition.onresult = (event: any) => {
-          const current = event.resultIndex;
-          const transcript = event.results[current][0].transcript;
-          const isFinal = event.results[current].isFinal;
+      recognition.onresult = (event: any) => {
+        const current = event.resultIndex;
+        const transcript = event.results[current][0].transcript;
+        const isFinal = event.results[current].isFinal;
 
-          if (isFinal && transcript.trim()) {
-            const newSubtitle = {
-              speaker: 'You',
-              text: transcript,
-              timestamp: new Date()
-            };
-            
-            setSubtitles(prev => [...prev.slice(-10), newSubtitle]);
-          }
-        };
-
-        recognition.onerror = (event: any) => {
-          console.error('Speech recognition error:', event.error);
-        };
-
-        recognitionRef.current = recognition;
-        
-        // Start recognition
-        try {
-          recognition.start();
-          console.log('Speech recognition started');
-        } catch (error) {
-          console.error('Failed to start speech recognition:', error);
+        if (isFinal && transcript.trim()) {
+          const newSubtitle = {
+            speaker: user?.username || 'You',
+            text: transcript,
+            timestamp: new Date()
+          };
+          
+          // Keep all transcripts for MOM generation
+          setSubtitles(prev => [...prev, newSubtitle]);
         }
-      }
-    } else if (!showSubtitles && recognitionRef.current) {
-      // Stop recognition
+      };
+
+      recognition.onerror = (event: any) => {
+        console.error('Speech recognition error:', event.error);
+        // Restart on certain errors
+        if (event.error === 'no-speech' || event.error === 'aborted') {
+          setTimeout(() => {
+            if (recognitionRef.current) {
+              try {
+                recognitionRef.current.start();
+              } catch (e) {
+                // Already started
+              }
+            }
+          }, 1000);
+        }
+      };
+
+      recognition.onend = () => {
+        // Auto-restart recognition if meeting is still active
+        if (recognitionRef.current) {
+          try {
+            recognitionRef.current.start();
+          } catch (e) {
+            // Already started or other error
+          }
+        }
+      };
+
+      recognitionRef.current = recognition;
+      
+      // Start recognition
       try {
-        recognitionRef.current.stop();
-        recognitionRef.current = null;
-        console.log('Speech recognition stopped');
+        recognition.start();
+        console.log('Speech recognition started automatically for transcript capture');
       } catch (error) {
-        console.error('Failed to stop speech recognition:', error);
+        console.error('Failed to start speech recognition:', error);
       }
+    } else {
+      console.warn('Speech recognition not supported in this browser');
     }
 
     // Cleanup
@@ -377,12 +395,13 @@ const MeetingPage: React.FC = () => {
       if (recognitionRef.current) {
         try {
           recognitionRef.current.stop();
+          recognitionRef.current = null;
         } catch (error) {
           console.error('Error stopping recognition:', error);
         }
       }
     };
-  }, [showSubtitles]);
+  }, [meeting, user?.username]);
 
   const toggleAudio = () => {
     const newState = !isAudioEnabled;
@@ -650,8 +669,8 @@ const MeetingPage: React.FC = () => {
     }
   };
 
-  const endMeeting = async () => {
-    if (!meeting || !isHost) return;
+  const endMeeting = useCallback(async () => {
+    if (!meeting) return;
     
     const confirmed = window.confirm(
       'Are you sure you want to end this meeting for everyone? Meeting minutes will be generated and sent to all participants.'
@@ -673,8 +692,14 @@ const MeetingPage: React.FC = () => {
           text: s.text
         }));
         
+        console.log(`Sending ${transcriptsData.length} transcript entries for MOM generation:`, transcriptsData);
+        
+        if (transcriptsData.length === 0) {
+          console.warn('No transcripts captured! Make sure microphone is enabled and speech recognition is working.');
+        }
+        
         await apiService.generateMeetingMinutes(meeting.meetingId, transcriptsData);
-        toast.success('Meeting ended! Minutes have been generated and sent to participants.', { id: 'end-meeting' });
+        toast.success(`Meeting ended! Minutes generated with ${transcriptsData.length} transcript entries.`, { id: 'end-meeting' });
       } catch (minutesError) {
         console.error('Error generating minutes:', minutesError);
         toast.success('Meeting ended! (Minutes generation may have failed)', { id: 'end-meeting' });
@@ -686,7 +711,7 @@ const MeetingPage: React.FC = () => {
       console.error('Error ending meeting:', error);
       toast.error('Failed to end meeting', { id: 'end-meeting' });
     }
-  };
+  }, [meeting, subtitles, navigate]);
 
   const cleanup = () => {
     webrtcService.cleanup();
@@ -1303,7 +1328,11 @@ const MeetingPage: React.FC = () => {
 
           {isHost ? (
             <button
-              onClick={endMeeting}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                endMeeting();
+              }}
               className="bg-red-600 hover:bg-red-700 px-6 py-3 rounded-full transition-colors flex items-center space-x-2"
               title="End meeting for everyone"
             >
@@ -1312,7 +1341,11 @@ const MeetingPage: React.FC = () => {
             </button>
           ) : (
             <button
-              onClick={leaveMeeting}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                leaveMeeting();
+              }}
               className="bg-red-600 hover:bg-red-700 px-6 py-3 rounded-full transition-colors flex items-center space-x-2"
             >
               <PhoneXMarkIcon className="w-6 h-6" />

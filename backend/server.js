@@ -7,6 +7,10 @@ const { createServer } = require('http');
 const { Server } = require('socket.io');
 require('dotenv').config();
 
+// Initialize services
+const queueService = require('./services/queueService');
+const cacheService = require('./services/cacheService');
+
 const app = express();
 const server = createServer(app);
 const io = new Server(server, {
@@ -51,7 +55,12 @@ app.use(limiter);
 
 // Database connection
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/ai-meet')
-.then(() => console.log('Connected to MongoDB'))
+.then(async () => {
+  console.log('Connected to MongoDB');
+  // Initialize Redis services after DB connection
+  await queueService.initialize();
+  cacheService.initialize();
+})
 .catch(err => console.error('MongoDB connection error:', err));
 
 // Routes
@@ -77,8 +86,17 @@ io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
 
   // Join meeting room
-  socket.on('join-meeting', (meetingId) => {
+  socket.on('join-meeting', async (meetingId) => {
     socket.join(meetingId);
+    socket.meetingId = meetingId;
+    
+    // Track online user in Redis
+    if (socket.userId) {
+      await cacheService.addOnlineUser(meetingId, socket.userId, {
+        socketId: socket.id
+      });
+    }
+    
     socket.to(meetingId).emit('user-joined', socket.id);
   });
 
@@ -137,4 +155,14 @@ io.on('connection', (socket) => {
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+  console.log('SIGTERM received, shutting down gracefully');
+  await queueService.shutdown();
+  server.close(() => {
+    console.log('Server closed');
+    process.exit(0);
+  });
 });

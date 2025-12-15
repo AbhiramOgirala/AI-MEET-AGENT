@@ -144,7 +144,7 @@ const meetingMinutesSchema = new mongoose.Schema({
       email: String,
       status: {
         type: String,
-        enum: ['pending', 'sent', 'failed'],
+        enum: ['pending', 'queued', 'sent', 'failed'],
         default: 'pending'
       },
       sentAt: Date,

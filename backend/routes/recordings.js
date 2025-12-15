@@ -4,6 +4,7 @@ const { authenticateToken } = require('../middleware/auth');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const queueService = require('../services/queueService');
 
 // Configure multer for recording uploads
 const storage = multer.diskStorage({
@@ -225,6 +226,10 @@ router.post('/upload', authenticateToken, upload.single('recording'), async (req
     meeting.recording.format = req.file.mimetype.includes('audio') ? 'mp3' : 'mp4';
 
     await meeting.save();
+
+    // Queue recording for background processing (e.g., metadata extraction)
+    const filePath = path.join('uploads/recordings', req.file.filename);
+    await queueService.addRecordingJob(meetingId, req.file.filename, filePath);
 
     res.json({
       success: true,
