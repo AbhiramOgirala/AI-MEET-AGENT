@@ -2,6 +2,12 @@ const express = require('express');
 const router = express.Router();
 const meetingController = require('../controllers/meetingController');
 const { authenticateToken } = require('../middleware/auth');
+const { iceServers } = require('../config/webrtc');
+
+// Get ICE servers for WebRTC
+router.get('/ice-servers', authenticateToken, (req, res) => {
+  res.json({ success: true, data: { iceServers } });
+});
 
 // Create a new meeting
 router.post('/', authenticateToken, meetingController.createMeeting);

@@ -74,6 +74,11 @@ const meetingMinutesRouter = require('./routes/meetingMinutes');
 // Set up socket.io for chat routes
 setSocketIO(io);
 
+// Health check endpoint (required for deployment platforms)
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
 app.use('/api/auth', authRouter);
 app.use('/api/meetings', meetingsRouter);
 app.use('/api/users', usersRouter);
