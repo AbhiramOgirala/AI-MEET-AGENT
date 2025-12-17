@@ -12,6 +12,10 @@ const queueService = require('./services/queueService');
 const cacheService = require('./services/cacheService');
 
 const app = express();
+
+// Trust proxy for Railway/Vercel deployment (required for rate limiting)
+app.set('trust proxy', 1);
+
 const server = createServer(app);
 const io = new Server(server, {
   cors: {
@@ -109,9 +113,26 @@ io.on('connection', (socket) => {
       await cacheService.addOnlineUser(meetingId, socket.userId, {
         socketId: socket.id
       });
+      
+      // Get user info for notification
+      try {
+        const User = require('./models/User');
+        const user = await User.findById(socket.userId).select('username avatar');
+        
+        // Notify others with user info
+        socket.to(meetingId).emit('user-joined', {
+          socketId: socket.id,
+          userId: socket.userId,
+          username: user?.username || 'Someone'
+        });
+        
+        console.log(`User ${user?.username} joined meeting ${meetingId}`);
+      } catch (err) {
+        socket.to(meetingId).emit('user-joined', socket.id);
+      }
+    } else {
+      socket.to(meetingId).emit('user-joined', socket.id);
     }
-    
-    socket.to(meetingId).emit('user-joined', socket.id);
   });
 
   // WebRTC signaling
@@ -151,6 +172,7 @@ io.on('connection', (socket) => {
 
   // Raise hand
   socket.on('raise-hand', (data) => {
+    console.log('Hand raised event:', data);
     socket.to(data.meetingId).emit('hand-raised', data);
   });
 
@@ -159,10 +181,53 @@ io.on('connection', (socket) => {
     socket.to(data.meetingId).emit('reaction', data);
   });
 
+  // Chat message via socket (real-time)
+  socket.on('chat-message', async (data) => {
+    console.log('Chat message received:', data);
+    const { meetingId, message } = data;
+    
+    if (!meetingId || !message) return;
+    
+    try {
+      const Meeting = require('./models/Meeting');
+      const User = require('./models/User');
+      
+      // Get sender info
+      const sender = await User.findById(socket.userId).select('username avatar');
+      
+      const chatMessage = {
+        sender: {
+          _id: socket.userId,
+          username: sender?.username || 'Unknown',
+          avatar: sender?.avatar || ''
+        },
+        message,
+        type: 'text',
+        timestamp: new Date()
+      };
+      
+      // Save to database
+      await Meeting.findOneAndUpdate(
+        { meetingId },
+        { 
+          $push: { chat: { sender: socket.userId, message, type: 'text', timestamp: new Date() } },
+          $inc: { 'statistics.chatMessages': 1 }
+        }
+      );
+      
+      // Broadcast to all in meeting (including sender for confirmation)
+      io.to(meetingId).emit('chat-message', chatMessage);
+    } catch (error) {
+      console.error('Chat message error:', error);
+    }
+  });
+
   // Disconnect
   socket.on('disconnect', () => {
     console.log('User disconnected:', socket.id);
-    socket.broadcast.emit('user-left', socket.id);
+    if (socket.meetingId) {
+      socket.to(socket.meetingId).emit('user-left', socket.id);
+    }
   });
 });
 

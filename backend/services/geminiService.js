@@ -1,7 +1,7 @@
 class GeminiService {
   constructor() {
     this.apiKey = process.env.GEMINI_API_KEY;
-    this.model = 'gemini-2.5-flash';
+    this.model = 'gemini-2.5-pro';
     this.baseUrl = 'https://generativelanguage.googleapis.com/v1beta/models';
   }
 
@@ -16,53 +16,64 @@ class GeminiService {
     return await this.callGeminiAPI(this.model, prompt);
   }
 
-  async callGeminiAPI(model, prompt) {
+  async callGeminiAPI(model, prompt, retries = 3) {
     const url = `${this.baseUrl}/${model}:generateContent?key=${this.apiKey}`;
     
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        contents: [{
-          parts: [{
-            text: prompt
-          }]
-        }],
-        generationConfig: {
-          temperature: 0.3,
-          topK: 40,
-          topP: 0.95,
-          maxOutputTokens: 8192,
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          contents: [{
+            parts: [{
+              text: prompt
+            }]
+          }],
+          generationConfig: {
+            temperature: 0.3,
+            topK: 40,
+            topP: 0.95,
+            maxOutputTokens: 8192,
+          }
+        })
+      });
+
+      if (!response.ok) {
+        const error = await response.text();
+        
+        // Retry on 503 (overloaded) or 429 (rate limit)
+        if ((response.status === 503 || response.status === 429) && attempt < retries) {
+          console.log(`Gemini API overloaded, retrying in ${attempt * 2} seconds... (attempt ${attempt}/${retries})`);
+          await new Promise(resolve => setTimeout(resolve, attempt * 2000));
+          continue;
         }
-      })
-    });
-
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Gemini API error: ${error}`);
-    }
-
-    const data = await response.json();
-    const generatedText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    
-    if (!generatedText) {
-      throw new Error('No response generated from Gemini');
-    }
-
-    // Parse the JSON response from Gemini
-    const parsedMinutes = this.parseGeminiResponse(generatedText);
-    
-    return {
-      ...parsedMinutes,
-      aiProcessing: {
-        model: model,
-        processedAt: new Date(),
-        tokensUsed: data.usageMetadata?.totalTokenCount || 0,
-        confidence: 0.85
+        
+        throw new Error(`Gemini API error: ${error}`);
       }
-    };
+      
+      // Success
+      const data = await response.json();
+      const generatedText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      
+      if (!generatedText) {
+        throw new Error('No response generated from Gemini');
+      }
+
+      // Parse the JSON response from Gemini
+      const parsedMinutes = this.parseGeminiResponse(generatedText);
+      
+      return {
+        ...parsedMinutes,
+        aiProcessing: {
+          model: model,
+          processedAt: new Date(),
+          tokensUsed: data.usageMetadata?.totalTokenCount || 0,
+          confidence: 0.85
+        }
+      };
+    }
   }
 
   buildPrompt(meetingData) {

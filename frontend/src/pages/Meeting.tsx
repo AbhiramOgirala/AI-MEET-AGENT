@@ -75,7 +75,8 @@ const MeetingPage: React.FC = () => {
       // Join meeting
       await apiService.joinMeeting(meetingId!);
 
-      // Initialize WebRTC
+      // Initialize WebRTC - ensure TURN servers are loaded first
+      await webrtcService.ensureIceServers();
       await webrtcService.initializeLocalMedia(true, true);
       webrtcService.setMeetingId(meetingId!);
       setLocalStreamReady(true);
@@ -149,13 +150,24 @@ const MeetingPage: React.FC = () => {
       webrtcService.handleIceCandidate(data);
     });
 
-    socketService.onUserJoined((userId: string) => {
-      console.log('User joined:', userId);
+    socketService.onUserJoined((data: any) => {
+      console.log('User joined:', data);
+      // Handle both old format (string) and new format (object)
+      const odId = typeof data === 'string' ? data : data.socketId;
+      const username = typeof data === 'object' ? data.username : 'Someone';
+      
       // Create peer connection for new user
-      webrtcService.createOffer(userId);
+      webrtcService.createOffer(odId);
       
       // Add notification for new participant
-      addNotification('join', `A new participant joined the meeting`);
+      addNotification('join', `${username} joined the meeting`);
+      
+      // Refresh meeting data to get updated participants list
+      apiService.getMeeting(meetingId!).then(response => {
+        if (response.success && response.data) {
+          setMeeting(response.data.meeting);
+        }
+      });
     });
 
     socketService.onUserLeft((userId: string) => {
@@ -730,15 +742,9 @@ const MeetingPage: React.FC = () => {
     }
 
     try {
-      // Send via API to save to database
-      const response = await apiService.sendMessage(meeting.meetingId, newMessage);
-      
-      if (response.success && response.data?.message) {
-        // Add message to local state immediately for better UX
-        const message = response.data.message;
-        setChatMessages(prev => [...prev, message]);
-        setNewMessage('');
-      }
+      // Send via socket for real-time delivery (backend will save to DB and broadcast)
+      socketService.sendChatMessage(meeting.meetingId, newMessage.trim());
+      setNewMessage('');
     } catch (error) {
       console.error('Error sending message:', error);
       toast.error('Failed to send message');

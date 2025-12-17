@@ -19,15 +19,49 @@ class WebRTCService {
   private currentMeetingId: string | null = null;
 
   constructor() {
+    // Default config with STUN servers - TURN will be added via fetchIceServers()
     this.configuration = {
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' },
-        // Add TURN servers for production
-        // { urls: 'turn:your-turn-server.com', username: 'user', credential: 'pass' }
       ],
     };
+    
+    // Fetch TURN servers from backend
+    this.fetchIceServers();
+  }
+
+  private async fetchIceServers(): Promise<void> {
+    try {
+      const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
+      const token = localStorage.getItem('token');
+      
+      if (!token) return;
+      
+      const response = await fetch(`${apiUrl}/meetings/ice-servers`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && data.data?.iceServers) {
+          this.configuration.iceServers = data.data.iceServers;
+          console.log('ICE servers loaded:', this.configuration.iceServers?.length, 'servers');
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to fetch ICE servers, using defaults:', error);
+    }
+  }
+
+  // Call this before joining a meeting to ensure TURN servers are loaded
+  async ensureIceServers(): Promise<void> {
+    if (!this.configuration.iceServers || this.configuration.iceServers.length <= 2) {
+      await this.fetchIceServers();
+    }
   }
 
   async initializeLocalMedia(audio = true, video = true): Promise<MediaStream> {

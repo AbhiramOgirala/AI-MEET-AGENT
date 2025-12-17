@@ -207,7 +207,10 @@ class ApiService {
 
   // Meeting Minutes endpoints
   async generateMeetingMinutes(meetingId: string, transcripts?: any[]): Promise<ApiResponse<{ minutes: any }>> {
-    const response = await this.api.post(`/meeting-minutes/${meetingId}/generate`, { transcripts });
+    // Longer timeout for AI processing (60 seconds)
+    const response = await this.api.post(`/meeting-minutes/${meetingId}/generate`, { transcripts }, {
+      timeout: 60000
+    });
     return response.data;
   }
 
