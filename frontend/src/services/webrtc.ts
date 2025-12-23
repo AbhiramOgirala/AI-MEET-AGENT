@@ -17,6 +17,7 @@ class WebRTCService {
   private isScreenSharing: boolean = false;
   private configuration: RTCConfiguration;
   private currentMeetingId: string | null = null;
+  private currentUserId: string | null = null;
 
   constructor() {
     // Default config with STUN servers - TURN will be added via fetchIceServers()
@@ -134,6 +135,7 @@ class WebRTCService {
 
     // Handle remote stream
     pc.ontrack = (event) => {
+      console.log(`Received track from ${userId}:`, event.track.kind);
       const [remoteStream] = event.streams;
       this.remoteStreams.set(userId, remoteStream);
       this.onRemoteStreamAdded?.(userId, remoteStream);
@@ -142,13 +144,24 @@ class WebRTCService {
     // Handle ICE candidates
     pc.onicecandidate = (event: RTCPeerConnectionIceEvent) => {
       if (event.candidate && this.currentMeetingId) {
+        console.log(`Sending ICE candidate to ${userId}`);
         socketService.sendIceCandidate({
           type: 'ice-candidate',
           data: event.candidate,
           meetingId: this.currentMeetingId,
-          from: 'current-user', // This should be replaced with actual user ID
+          from: this.currentUserId || 'unknown',
           to: userId,
         });
+      }
+    };
+
+    // Handle ICE connection state changes
+    pc.oniceconnectionstatechange = () => {
+      console.log(`ICE connection state with ${userId}:`, pc.iceConnectionState);
+      
+      if (pc.iceConnectionState === 'failed') {
+        console.log(`ICE connection failed with ${userId}, attempting restart...`);
+        pc.restartIce();
       }
     };
 
@@ -167,16 +180,18 @@ class WebRTCService {
 
   async createOffer(userId: string): Promise<void> {
     try {
+      console.log(`Creating offer for ${userId}`);
       const pc = this.getOrCreatePeerConnection(userId);
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
 
       if (this.currentMeetingId) {
+        console.log(`Sending offer to ${userId}`);
         socketService.sendOffer({
           type: 'offer',
           data: offer,
           meetingId: this.currentMeetingId,
-          from: 'current-user', // Replace with actual user ID
+          from: this.currentUserId || 'unknown',
           to: userId,
         });
       }
@@ -187,17 +202,19 @@ class WebRTCService {
 
   async handleOffer(data: WebRTCSignal): Promise<void> {
     try {
+      console.log(`Received offer from ${data.from}`);
       const pc = this.getOrCreatePeerConnection(data.from);
       await pc.setRemoteDescription(new RTCSessionDescription(data.data));
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
 
       if (this.currentMeetingId) {
+        console.log(`Sending answer to ${data.from}`);
         socketService.sendAnswer({
           type: 'answer',
           data: answer,
           meetingId: this.currentMeetingId,
-          from: 'current-user', // Replace with actual user ID
+          from: this.currentUserId || 'unknown',
           to: data.from,
         });
       }
@@ -208,6 +225,7 @@ class WebRTCService {
 
   async handleAnswer(data: WebRTCSignal): Promise<void> {
     try {
+      console.log(`Received answer from ${data.from}`);
       const pc = this.getOrCreatePeerConnection(data.from);
       await pc.setRemoteDescription(new RTCSessionDescription(data.data));
     } catch (error) {
@@ -217,6 +235,7 @@ class WebRTCService {
 
   async handleIceCandidate(data: WebRTCSignal): Promise<void> {
     try {
+      console.log(`Received ICE candidate from ${data.from}`);
       const pc = this.getOrCreatePeerConnection(data.from);
       await pc.addIceCandidate(new RTCIceCandidate(data.data));
     } catch (error) {
@@ -279,6 +298,7 @@ class WebRTCService {
     this.remoteStreams.clear();
     this.isScreenSharing = false;
     this.currentMeetingId = null;
+    this.currentUserId = null;
   }
 
   // Event callbacks
@@ -324,6 +344,14 @@ class WebRTCService {
 
   setMeetingId(meetingId: string): void {
     this.currentMeetingId = meetingId;
+  }
+
+  setUserId(userId: string): void {
+    this.currentUserId = userId;
+  }
+
+  getCurrentUserId(): string | null {
+    return this.currentUserId;
   }
 
   // Statistics and monitoring

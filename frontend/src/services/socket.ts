@@ -134,15 +134,21 @@ class SocketService {
   }
 
   // Event listeners
-  onUserJoined(callback: (userId: string) => void): void {
+  onUserJoined(callback: (data: any) => void): void {
     if (this.socket) {
       this.socket.on(SocketEvents.USER_JOINED, callback);
     }
   }
 
-  onUserLeft(callback: (userId: string) => void): void {
+  onUserLeft(callback: (data: any) => void): void {
     if (this.socket) {
       this.socket.on(SocketEvents.USER_LEFT, callback);
+    }
+  }
+
+  onExistingParticipants(callback: (participants: Array<{socketId: string; odId: string; username: string}>) => void): void {
+    if (this.socket) {
+      this.socket.on('existing-participants', callback);
     }
   }
 

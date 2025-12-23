@@ -299,15 +299,22 @@ class QueueService {
   // Process meeting minutes email
   async processMeetingMinutesEmail(data) {
     const { meetingId, recipientEmail } = data;
+    console.log(`Processing meeting minutes email for meeting ${meetingId} to ${recipientEmail}`);
+    
     const MeetingMinutes = require('../models/MeetingMinutes');
 
     const minutes = await MeetingMinutes.findOne({ meetingId });
     if (!minutes) {
+      console.error(`Meeting minutes not found for meeting ${meetingId}`);
       throw new Error('Meeting minutes not found');
     }
 
-    await emailService.sendMeetingMinutes(minutes, [{ email: recipientEmail }]);
-    console.log(`Sent meeting minutes to ${recipientEmail}`);
+    console.log(`Found meeting minutes, status: ${minutes.status}`);
+    
+    const results = await emailService.sendMeetingMinutes(minutes, [{ email: recipientEmail }]);
+    console.log(`Email send results:`, results);
+    
+    return results;
   }
 
   // Add email job to queue

@@ -153,10 +153,10 @@ const MeetingPage: React.FC = () => {
     socketService.onUserJoined((data: any) => {
       console.log('User joined:', data);
       // Handle both old format (string) and new format (object)
-      const odId = typeof data === 'string' ? data : data.socketId;
+      const odId = typeof data === 'string' ? data : (data.odId || data.socketId);
       const username = typeof data === 'object' ? data.username : 'Someone';
       
-      // Create peer connection for new user
+      // Create peer connection for new user using their userId
       webrtcService.createOffer(odId);
       
       // Add notification for new participant
@@ -170,9 +170,27 @@ const MeetingPage: React.FC = () => {
       });
     });
 
-    socketService.onUserLeft((userId: string) => {
-      console.log('User left:', userId);
-      webrtcService.cleanupPeerConnection(userId);
+    // Handle existing participants when joining a meeting
+    socketService.onExistingParticipants((participants) => {
+      console.log('Existing participants:', participants);
+      // Create peer connections for all existing participants
+      participants.forEach(participant => {
+        webrtcService.createOffer(participant.odId);
+      });
+    });
+
+    socketService.onUserLeft((data: any) => {
+      console.log('User left:', data);
+      // Handle both old format (string) and new format (object)
+      const odId = typeof data === 'string' ? data : (data.odId || data.socketId);
+      webrtcService.cleanupPeerConnection(odId);
+      
+      // Refresh meeting data to get updated participants list
+      apiService.getMeeting(meetingId!).then(response => {
+        if (response.success && response.data) {
+          setMeeting(response.data.meeting);
+        }
+      });
     });
 
     // Meeting controls - update participant media states
@@ -306,14 +324,23 @@ const MeetingPage: React.FC = () => {
   useEffect(() => {
     if (!meetingId) return;
 
-    initializeMeeting();
-    setupSocketListeners();
+    const init = async () => {
+      await initializeMeeting();
+      // Set the current user ID for WebRTC signaling
+      if (user?._id) {
+        webrtcService.setUserId(user._id);
+      }
+      // Setup listeners AFTER socket is connected
+      setupSocketListeners();
+    };
+    
+    init();
 
     return () => {
       webrtcService.cleanup();
       socketService.disconnect();
     };
-  }, [meetingId, initializeMeeting, setupSocketListeners]);
+  }, [meetingId, initializeMeeting, setupSocketListeners, user?._id]);
 
   useEffect(() => {
     console.log('Local video effect - localStreamReady:', localStreamReady, 'isVideoEnabled:', isVideoEnabled);

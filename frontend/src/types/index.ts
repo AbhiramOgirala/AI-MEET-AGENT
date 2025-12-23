@@ -178,6 +178,7 @@ export enum SocketEvents {
   JOIN_MEETING = 'join-meeting',
   USER_JOINED = 'user-joined',
   USER_LEFT = 'user-left',
+  EXISTING_PARTICIPANTS = 'existing-participants',
   
   // WebRTC
   OFFER = 'offer',

@@ -1,7 +1,7 @@
 class GeminiService {
   constructor() {
     this.apiKey = process.env.GEMINI_API_KEY;
-    this.model = 'gemini-2.5-pro';
+    this.model = 'gemini-2.5-flash';
     this.baseUrl = 'https://generativelanguage.googleapis.com/v1beta/models';
   }
 

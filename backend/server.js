@@ -119,33 +119,92 @@ io.on('connection', (socket) => {
         const User = require('./models/User');
         const user = await User.findById(socket.userId).select('username avatar');
         
-        // Notify others with user info
+        // Notify others with user info - include both socketId and odId for WebRTC
         socket.to(meetingId).emit('user-joined', {
           socketId: socket.id,
-          userId: socket.userId,
+          odId: socket.userId,
           username: user?.username || 'Someone'
         });
         
-        console.log(`User ${user?.username} joined meeting ${meetingId}`);
+        console.log(`User ${user?.username} (${socket.userId}) joined meeting ${meetingId}`);
+        
+        // Send existing participants to the new user so they can initiate connections
+        const room = io.sockets.adapter.rooms.get(meetingId);
+        if (room) {
+          const existingUsers = [];
+          for (const socketId of room) {
+            if (socketId !== socket.id) {
+              const existingSocket = io.sockets.sockets.get(socketId);
+              if (existingSocket && existingSocket.userId) {
+                const existingUser = await User.findById(existingSocket.userId).select('username');
+                existingUsers.push({
+                  socketId: existingSocket.id,
+                  odId: existingSocket.userId,
+                  username: existingUser?.username || 'Unknown'
+                });
+              }
+            }
+          }
+          if (existingUsers.length > 0) {
+            socket.emit('existing-participants', existingUsers);
+          }
+        }
       } catch (err) {
-        socket.to(meetingId).emit('user-joined', socket.id);
+        socket.to(meetingId).emit('user-joined', {
+          socketId: socket.id,
+          odId: socket.userId
+        });
       }
     } else {
-      socket.to(meetingId).emit('user-joined', socket.id);
+      socket.to(meetingId).emit('user-joined', {
+        socketId: socket.id,
+        odId: socket.id
+      });
     }
   });
 
-  // WebRTC signaling
+  // WebRTC signaling - route to specific user
   socket.on('offer', (data) => {
-    socket.to(data.meetingId).emit('offer', data);
+    // Send offer to specific user if 'to' is specified, otherwise broadcast
+    if (data.to) {
+      // Find the socket of the target user
+      const targetSocket = Array.from(io.sockets.sockets.values()).find(
+        s => s.userId === data.to || s.id === data.to
+      );
+      if (targetSocket) {
+        targetSocket.emit('offer', { ...data, from: socket.userId || socket.id });
+      }
+    } else {
+      socket.to(data.meetingId).emit('offer', { ...data, from: socket.userId || socket.id });
+    }
   });
 
   socket.on('answer', (data) => {
-    socket.to(data.meetingId).emit('answer', data);
+    // Send answer to specific user
+    if (data.to) {
+      const targetSocket = Array.from(io.sockets.sockets.values()).find(
+        s => s.userId === data.to || s.id === data.to
+      );
+      if (targetSocket) {
+        targetSocket.emit('answer', { ...data, from: socket.userId || socket.id });
+      }
+    } else {
+      socket.to(data.meetingId).emit('answer', { ...data, from: socket.userId || socket.id });
+    }
   });
 
   socket.on('ice-candidate', (data) => {
-    socket.to(data.meetingId).emit('ice-candidate', data);
+    // Send ICE candidate to specific user
+    if (data.to) {
+      const targetSocket = Array.from(io.sockets.sockets.values()).find(
+        s => s.userId === data.to || s.id === data.to
+      );
+      if (targetSocket) {
+        targetSocket.emit('ice-candidate', { ...data, from: socket.userId || socket.id });
+      }
+    } else {
+      socket.to(data.meetingId).emit('ice-candidate', { ...data, from: socket.userId || socket.id });
+    }
   });
 
   // Meeting controls
@@ -224,9 +283,13 @@ io.on('connection', (socket) => {
 
   // Disconnect
   socket.on('disconnect', () => {
-    console.log('User disconnected:', socket.id);
+    console.log('User disconnected:', socket.id, 'userId:', socket.userId);
     if (socket.meetingId) {
-      socket.to(socket.meetingId).emit('user-left', socket.id);
+      // Send userId for proper cleanup on frontend
+      socket.to(socket.meetingId).emit('user-left', {
+        socketId: socket.id,
+        odId: socket.userId || socket.id
+      });
     }
   });
 });

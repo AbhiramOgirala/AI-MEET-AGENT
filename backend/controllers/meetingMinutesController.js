@@ -91,6 +91,15 @@ const meetingMinutesController = {
 
       // Generate AI-powered minutes using Gemini
       try {
+        console.log('Starting AI minutes generation...');
+        console.log('Meeting data:', {
+          title: meeting.title,
+          date: startTime,
+          duration: duration,
+          attendeesCount: attendees.length,
+          transcriptsCount: (transcripts || []).length
+        });
+        
         const aiMinutes = await geminiService.generateMeetingMinutes({
           title: meeting.title,
           date: startTime,
@@ -98,6 +107,8 @@ const meetingMinutesController = {
           attendees: attendees,
           transcripts: transcripts || []
         });
+
+        console.log('AI minutes generated successfully');
 
         // Update with AI-generated content
         meetingMinutes.summary = aiMinutes.summary;
@@ -112,12 +123,16 @@ const meetingMinutesController = {
         meetingMinutes.status = 'completed';
 
         await meetingMinutes.save();
+        console.log('Meeting minutes saved to database');
 
         // Send email to all participants via queue
         const recipients = attendees.filter(a => a.email);
+        console.log(`Preparing to send meeting minutes to ${recipients.length} recipients:`, recipients.map(r => r.email));
+        
         if (recipients.length > 0) {
           // Queue emails for each recipient
           for (const recipient of recipients) {
+            console.log(`Queueing email for ${recipient.email}`);
             await queueService.addEmailJob('meeting-minutes', {
               meetingId: meeting.meetingId,
               recipientEmail: recipient.email
@@ -132,6 +147,9 @@ const meetingMinutesController = {
             recipients: recipients.map(r => ({ email: r.email, status: 'queued' }))
           };
           await updatedMinutes.save();
+          console.log('Email delivery status updated');
+        } else {
+          console.log('No recipients with email addresses found');
         }
 
         res.json({
@@ -142,6 +160,7 @@ const meetingMinutesController = {
 
       } catch (aiError) {
         console.error('AI processing error:', aiError);
+        console.error('AI error stack:', aiError.stack);
         meetingMinutes.status = 'failed';
         meetingMinutes.error = aiError.message;
         await meetingMinutes.save();

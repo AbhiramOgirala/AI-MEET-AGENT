@@ -23,19 +23,31 @@ class EmailService {
   }
 
   async sendMeetingMinutes(meetingMinutes, recipients) {
+    console.log(`sendMeetingMinutes called for ${meetingMinutes.title} to ${recipients.length} recipients`);
     this.initialize();
     
     if (!this.transporter) {
+      console.error('Email transporter not configured');
       throw new Error('Email service not configured');
+    }
+
+    // Verify transporter connection
+    try {
+      await this.transporter.verify();
+      console.log('Email transporter verified successfully');
+    } catch (verifyError) {
+      console.error('Email transporter verification failed:', verifyError.message);
+      throw new Error(`Email configuration error: ${verifyError.message}`);
     }
 
     const results = [];
     
     for (const recipient of recipients) {
       try {
+        console.log(`Sending meeting minutes email to ${recipient.email}...`);
         const htmlContent = this.generateEmailHTML(meetingMinutes);
         
-        await this.transporter.sendMail({
+        const info = await this.transporter.sendMail({
           from: `"AI Meet" <${process.env.EMAIL_USER}>`,
           to: recipient.email,
           subject: `Meeting Minutes: ${meetingMinutes.title} - ${new Date(meetingMinutes.date).toLocaleDateString()}`,
@@ -45,12 +57,14 @@ class EmailService {
         results.push({
           email: recipient.email,
           status: 'sent',
-          sentAt: new Date()
+          sentAt: new Date(),
+          messageId: info.messageId
         });
         
-        console.log(`Meeting minutes sent to ${recipient.email}`);
+        console.log(`Meeting minutes sent to ${recipient.email}, messageId: ${info.messageId}`);
       } catch (error) {
-        console.error(`Failed to send email to ${recipient.email}:`, error);
+        console.error(`Failed to send email to ${recipient.email}:`, error.message);
+        console.error('Full error:', error);
         results.push({
           email: recipient.email,
           status: 'failed',
