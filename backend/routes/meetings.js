@@ -36,4 +36,10 @@ router.post('/:meetingId/end', authenticateToken, meetingController.endMeeting);
 // Cancel scheduled meeting (host only)
 router.post('/:meetingId/cancel', authenticateToken, meetingController.cancelMeeting);
 
+// Save transcripts for a meeting
+router.post('/:meetingId/transcripts', authenticateToken, meetingController.saveTranscripts);
+
+// Get transcripts for a meeting
+router.get('/:meetingId/transcripts', authenticateToken, meetingController.getTranscripts);
+
 module.exports = router;

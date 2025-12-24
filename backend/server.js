@@ -231,8 +231,13 @@ io.on('connection', (socket) => {
 
   // Raise hand
   socket.on('raise-hand', (data) => {
-    console.log('Hand raised event:', data);
-    socket.to(data.meetingId).emit('hand-raised', data);
+    console.log('Hand raised event received:', data);
+    // Broadcast to all others in the meeting with consistent field names
+    socket.to(data.meetingId).emit('hand-raised', {
+      ...data,
+      odId: data.odId || data.userId || socket.userId,
+      username: data.username
+    });
   });
 
   // Reactions
@@ -242,10 +247,14 @@ io.on('connection', (socket) => {
 
   // Chat message via socket (real-time)
   socket.on('chat-message', async (data) => {
-    console.log('Chat message received:', data);
+    console.log('Chat message received from socket:', socket.id, 'userId:', socket.userId);
+    console.log('Chat message data:', data);
     const { meetingId, message } = data;
     
-    if (!meetingId || !message) return;
+    if (!meetingId || !message) {
+      console.log('Invalid chat message - missing meetingId or message');
+      return;
+    }
     
     try {
       const Meeting = require('./models/Meeting');
@@ -253,6 +262,7 @@ io.on('connection', (socket) => {
       
       // Get sender info
       const sender = await User.findById(socket.userId).select('username avatar');
+      console.log('Sender info:', sender?.username);
       
       const chatMessage = {
         sender: {
@@ -275,7 +285,9 @@ io.on('connection', (socket) => {
       );
       
       // Broadcast to all in meeting (including sender for confirmation)
+      console.log('Broadcasting chat message to room:', meetingId);
       io.to(meetingId).emit('chat-message', chatMessage);
+      console.log('Chat message broadcast complete');
     } catch (error) {
       console.error('Chat message error:', error);
     }

@@ -137,16 +137,24 @@ const MeetingPage: React.FC = () => {
   };
 
   const setupSocketListeners = useCallback(() => {
+    console.log('Setting up socket listeners for meeting:', meetingId);
+    
+    // Remove any existing listeners first to prevent duplicates
+    socketService.removeAllMeetingListeners();
+    
     // WebRTC signaling
     socketService.onOffer((data) => {
+      console.log('Received offer:', data);
       webrtcService.handleOffer(data);
     });
 
     socketService.onAnswer((data) => {
+      console.log('Received answer:', data);
       webrtcService.handleAnswer(data);
     });
 
     socketService.onIceCandidate((data) => {
+      console.log('Received ICE candidate:', data);
       webrtcService.handleIceCandidate(data);
     });
 
@@ -156,18 +164,20 @@ const MeetingPage: React.FC = () => {
       const odId = typeof data === 'string' ? data : (data.odId || data.socketId);
       const username = typeof data === 'object' ? data.username : 'Someone';
       
-      // Create peer connection for new user using their userId
+      // Create peer connection for new user using their odId
       webrtcService.createOffer(odId);
       
       // Add notification for new participant
       addNotification('join', `${username} joined the meeting`);
       
       // Refresh meeting data to get updated participants list
-      apiService.getMeeting(meetingId!).then(response => {
-        if (response.success && response.data) {
-          setMeeting(response.data.meeting);
-        }
-      });
+      if (meetingId) {
+        apiService.getMeeting(meetingId).then(response => {
+          if (response.success && response.data) {
+            setMeeting(response.data.meeting);
+          }
+        });
+      }
     });
 
     // Handle existing participants when joining a meeting
@@ -186,24 +196,25 @@ const MeetingPage: React.FC = () => {
       webrtcService.cleanupPeerConnection(odId);
       
       // Refresh meeting data to get updated participants list
-      apiService.getMeeting(meetingId!).then(response => {
-        if (response.success && response.data) {
-          setMeeting(response.data.meeting);
-        }
-      });
+      if (meetingId) {
+        apiService.getMeeting(meetingId).then(response => {
+          if (response.success && response.data) {
+            setMeeting(response.data.meeting);
+          }
+        });
+      }
     });
 
     // Meeting controls - update participant media states
-    socketService.onAudioToggled((data: { audioEnabled: boolean; userId: string }) => {
+    socketService.onAudioToggled((data: { audioEnabled: boolean; odId: string }) => {
       console.log('Audio toggled:', data);
-      if (!data.userId) return; // Ignore if no userId
-      // Update the meeting participants' media state
+      if (!data.odId) return;
       setMeeting(prev => {
         if (!prev) return prev;
         return {
           ...prev,
           participants: prev.participants.map(p => {
-            if (p.user._id === data.userId) {
+            if (p.user._id === data.odId) {
               return {
                 ...p,
                 mediaState: {
@@ -218,15 +229,14 @@ const MeetingPage: React.FC = () => {
       });
     });
 
-    socketService.onVideoToggled((data: { videoEnabled: boolean; userId: string }) => {
+    socketService.onVideoToggled((data: { videoEnabled: boolean; odId: string }) => {
       console.log('Video toggled:', data);
-      // Update the meeting participants' media state
       setMeeting(prev => {
         if (!prev) return prev;
         return {
           ...prev,
           participants: prev.participants.map(p => {
-            if (p.user._id === data.userId) {
+            if (p.user._id === data.odId) {
               return {
                 ...p,
                 mediaState: {
@@ -241,15 +251,14 @@ const MeetingPage: React.FC = () => {
       });
     });
 
-    socketService.onScreenShare((data: { active: boolean; userId: string }) => {
+    socketService.onScreenShare((data: { active: boolean; odId: string }) => {
       console.log('Screen share:', data);
-      // Update the meeting participants' media state
       setMeeting(prev => {
         if (!prev) return prev;
         return {
           ...prev,
           participants: prev.participants.map(p => {
-            if (p.user._id === data.userId) {
+            if (p.user._id === data.odId) {
               return {
                 ...p,
                 mediaState: {
@@ -264,12 +273,16 @@ const MeetingPage: React.FC = () => {
       });
     });
 
-    // Chat
+    // Chat - this is the key listener for real-time chat
     socketService.onChatMessage((data) => {
+      console.log('Chat message received via socket:', data);
       setChatMessages(prev => [...prev, data]);
       
-      // Add notification if chat panel is closed and message is from someone else
-      if (data.sender?._id !== user?._id) {
+      // Get current user from localStorage for comparison
+      const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
+      
+      // Add notification if message is from someone else
+      if (data.sender?._id !== currentUser._id) {
         addNotification('message', `${data.sender?.username || 'Someone'}: ${data.message.substring(0, 50)}${data.message.length > 50 ? '...' : ''}`);
         setUnreadMessages(prev => prev + 1);
       }
@@ -287,16 +300,20 @@ const MeetingPage: React.FC = () => {
       navigate('/dashboard');
     });
 
-    // Interactions
-    socketService.onHandRaised((data: { raised: boolean; userId: string; username?: string }) => {
-      console.log('Hand raised:', data);
+    // Interactions - Hand raised
+    socketService.onHandRaised((data: { raised: boolean; odId: string; username?: string }) => {
+      console.log('Hand raised event received:', data);
+      
+      // Get current user from localStorage for comparison
+      const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
+      
       // Update the meeting participants' media state
       setMeeting(prev => {
         if (!prev) return prev;
         return {
           ...prev,
           participants: prev.participants.map(p => {
-            if (p.user._id === data.userId) {
+            if (p.user._id === data.odId) {
               return {
                 ...p,
                 mediaState: {
@@ -310,8 +327,8 @@ const MeetingPage: React.FC = () => {
         };
       });
       
-      // Add notification for raised hand
-      if (data.raised && data.userId !== user?._id) {
+      // Add notification for raised hand (only if from someone else)
+      if (data.raised && data.odId !== currentUser._id) {
         addNotification('hand', `${data.username || 'Someone'} raised their hand`);
       }
     });
@@ -319,7 +336,7 @@ const MeetingPage: React.FC = () => {
     socketService.onReaction(() => {
       // Show reaction animation
     });
-  }, [navigate, user?._id, addNotification]);
+  }, [navigate, addNotification, meetingId]);
 
   useEffect(() => {
     if (!meetingId) return;
@@ -337,6 +354,8 @@ const MeetingPage: React.FC = () => {
     init();
 
     return () => {
+      // Clean up all listeners before disconnecting
+      socketService.removeAllMeetingListeners();
       webrtcService.cleanup();
       socketService.disconnect();
     };
@@ -362,6 +381,19 @@ const MeetingPage: React.FC = () => {
   useEffect(() => {
     // Start transcription automatically when meeting is loaded
     if (!meeting || recognitionRef.current) return;
+    
+    // Load existing transcripts from server
+    apiService.getTranscripts(meeting.meetingId).then(response => {
+      if (response.success && response.data?.transcripts) {
+        const loadedSubtitles = response.data.transcripts.map((t: any) => ({
+          speaker: t.speakerName,
+          text: t.text,
+          timestamp: new Date(t.timestamp)
+        }));
+        setSubtitles(loadedSubtitles);
+        console.log(`Loaded ${loadedSubtitles.length} existing transcripts`);
+      }
+    }).catch(err => console.error('Failed to load transcripts:', err));
     
     // Initialize speech recognition
     if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
@@ -441,6 +473,30 @@ const MeetingPage: React.FC = () => {
       }
     };
   }, [meeting, user?.username]);
+
+  // Save transcripts to server periodically (every 30 seconds)
+  useEffect(() => {
+    if (!meeting || subtitles.length === 0) return;
+
+    const saveInterval = setInterval(async () => {
+      if (subtitles.length > 0) {
+        try {
+          const transcriptsToSave = subtitles.map(s => ({
+            speakerName: s.speaker,
+            text: s.text,
+            timestamp: s.timestamp
+          }));
+          
+          await apiService.saveTranscripts(meeting.meetingId, transcriptsToSave);
+          console.log(`Saved ${transcriptsToSave.length} transcripts to server`);
+        } catch (error) {
+          console.error('Failed to save transcripts:', error);
+        }
+      }
+    }, 30000); // Save every 30 seconds
+
+    return () => clearInterval(saveInterval);
+  }, [meeting, subtitles]);
 
   const toggleAudio = () => {
     const newState = !isAudioEnabled;
@@ -720,18 +776,51 @@ const MeetingPage: React.FC = () => {
     try {
       toast.loading('Ending meeting and generating minutes...', { id: 'end-meeting' });
       
+      // Save any remaining transcripts first
+      if (subtitles.length > 0) {
+        try {
+          const transcriptsToSave = subtitles.map(s => ({
+            speakerName: s.speaker,
+            text: s.text,
+            timestamp: s.timestamp
+          }));
+          await apiService.saveTranscripts(meeting.meetingId, transcriptsToSave);
+          console.log('Final transcripts saved before ending meeting');
+        } catch (saveError) {
+          console.error('Failed to save final transcripts:', saveError);
+        }
+      }
+      
       // End the meeting
       await apiService.endMeeting(meeting.meetingId);
       
       // Generate meeting minutes with transcripts (if available)
       try {
-        const transcriptsData = subtitles.map(s => ({
+        // Use local transcripts, or fetch from server if local is empty
+        let transcriptsData = subtitles.map(s => ({
           speakerName: s.speaker,
           startTime: s.timestamp,
           text: s.text
         }));
         
-        console.log(`Sending ${transcriptsData.length} transcript entries for MOM generation:`, transcriptsData);
+        // If no local transcripts, try to get from server
+        if (transcriptsData.length === 0) {
+          try {
+            const serverTranscripts = await apiService.getTranscripts(meeting.meetingId);
+            if (serverTranscripts.success && serverTranscripts.data?.transcripts) {
+              transcriptsData = serverTranscripts.data.transcripts.map((t: any) => ({
+                speakerName: t.speakerName,
+                startTime: t.timestamp,
+                text: t.text
+              }));
+              console.log(`Using ${transcriptsData.length} transcripts from server`);
+            }
+          } catch (fetchError) {
+            console.error('Failed to fetch server transcripts:', fetchError);
+          }
+        }
+        
+        console.log(`Sending ${transcriptsData.length} transcript entries for MOM generation`);
         
         if (transcriptsData.length === 0) {
           console.warn('No transcripts captured! Make sure microphone is enabled and speech recognition is working.');

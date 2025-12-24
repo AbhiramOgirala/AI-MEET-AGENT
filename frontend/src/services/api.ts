@@ -228,6 +228,17 @@ class ApiService {
     const response = await this.api.post(`/meeting-minutes/${meetingId}/resend-email`, { email });
     return response.data;
   }
+
+  // Transcript endpoints
+  async saveTranscripts(meetingId: string, transcripts: any[]): Promise<ApiResponse<{ totalTranscripts: number }>> {
+    const response = await this.api.post(`/meetings/${meetingId}/transcripts`, { transcripts });
+    return response.data;
+  }
+
+  async getTranscripts(meetingId: string): Promise<ApiResponse<{ transcripts: any[] }>> {
+    const response = await this.api.get(`/meetings/${meetingId}/transcripts`);
+    return response.data;
+  }
 }
 
 export const apiService = new ApiService();

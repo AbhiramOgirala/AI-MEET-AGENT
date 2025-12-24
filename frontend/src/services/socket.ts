@@ -121,9 +121,9 @@ class SocketService {
   }
 
   // Interactions
-  raiseHand(meetingId: string, raised: boolean, userId?: string, username?: string): void {
+  raiseHand(meetingId: string, raised: boolean, odId?: string, username?: string): void {
     if (this.socket) {
-      this.socket.emit(SocketEvents.RAISE_HAND, { meetingId, raised, userId, username });
+      this.socket.emit(SocketEvents.RAISE_HAND, { meetingId, raised, odId, username });
     }
   }
 
@@ -226,6 +226,26 @@ class SocketService {
       } else {
         this.socket.off(event);
       }
+    }
+  }
+
+  // Remove all meeting-related listeners
+  removeAllMeetingListeners(): void {
+    if (this.socket) {
+      this.socket.off(SocketEvents.USER_JOINED);
+      this.socket.off(SocketEvents.USER_LEFT);
+      this.socket.off(SocketEvents.OFFER);
+      this.socket.off(SocketEvents.ANSWER);
+      this.socket.off(SocketEvents.ICE_CANDIDATE);
+      this.socket.off(SocketEvents.AUDIO_TOGGLED);
+      this.socket.off(SocketEvents.VIDEO_TOGGLED);
+      this.socket.off(SocketEvents.SCREEN_SHARE);
+      this.socket.off(SocketEvents.CHAT_MESSAGE);
+      this.socket.off(SocketEvents.MUTED_BY_HOST);
+      this.socket.off(SocketEvents.REMOVED_FROM_MEETING);
+      this.socket.off(SocketEvents.HAND_RAISED);
+      this.socket.off(SocketEvents.REACTION);
+      this.socket.off('existing-participants');
     }
   }
 

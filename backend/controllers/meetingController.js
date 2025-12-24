@@ -492,6 +492,107 @@ const meetingController = {
         message: 'Internal server error'
       });
     }
+  },
+
+  // Save transcripts for a meeting (called periodically during meeting)
+  async saveTranscripts(req, res) {
+    try {
+      const { meetingId } = req.params;
+      const { transcripts } = req.body;
+
+      if (!transcripts || !Array.isArray(transcripts)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Transcripts array is required'
+        });
+      }
+
+      const meeting = await Meeting.findOne({ meetingId });
+
+      if (!meeting) {
+        return res.status(404).json({
+          success: false,
+          message: 'Meeting not found'
+        });
+      }
+
+      // Check if user is a participant
+      const isParticipant = meeting.participants.some(
+        p => p.user.toString() === req.userId.toString() && p.status === 'joined'
+      );
+
+      if (!isParticipant) {
+        return res.status(403).json({
+          success: false,
+          message: 'Only participants can save transcripts'
+        });
+      }
+
+      // Append new transcripts (avoid duplicates by checking timestamp)
+      const existingTimestamps = new Set(
+        (meeting.transcripts || []).map(t => new Date(t.timestamp).getTime())
+      );
+
+      const newTranscripts = transcripts.filter(
+        t => !existingTimestamps.has(new Date(t.timestamp).getTime())
+      );
+
+      if (newTranscripts.length > 0) {
+        meeting.transcripts = [...(meeting.transcripts || []), ...newTranscripts];
+        await meeting.save();
+      }
+
+      res.json({
+        success: true,
+        message: `Saved ${newTranscripts.length} new transcript entries`,
+        data: { totalTranscripts: meeting.transcripts.length }
+      });
+    } catch (error) {
+      console.error('Save transcripts error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Internal server error'
+      });
+    }
+  },
+
+  // Get transcripts for a meeting
+  async getTranscripts(req, res) {
+    try {
+      const { meetingId } = req.params;
+
+      const meeting = await Meeting.findOne({ meetingId });
+
+      if (!meeting) {
+        return res.status(404).json({
+          success: false,
+          message: 'Meeting not found'
+        });
+      }
+
+      // Check if user is a participant
+      const isParticipant = meeting.participants.some(
+        p => p.user.toString() === req.userId.toString()
+      );
+
+      if (!isParticipant) {
+        return res.status(403).json({
+          success: false,
+          message: 'Only participants can view transcripts'
+        });
+      }
+
+      res.json({
+        success: true,
+        data: { transcripts: meeting.transcripts || [] }
+      });
+    } catch (error) {
+      console.error('Get transcripts error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Internal server error'
+      });
+    }
   }
 };
 

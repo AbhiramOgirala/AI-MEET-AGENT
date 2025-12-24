@@ -133,7 +133,14 @@ const meetingSchema = new mongoose.Schema({
     chatMessages: { type: Number, default: 0 },
     filesShared: { type: Number, default: 0 },
     screenShares: { type: Number, default: 0 }
-  }
+  },
+  // Transcripts for meeting minutes generation
+  transcripts: [{
+    speakerName: { type: String, required: true },
+    odId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    text: { type: String, required: true },
+    timestamp: { type: Date, default: Date.now }
+  }]
 }, {
   timestamps: true
 });
