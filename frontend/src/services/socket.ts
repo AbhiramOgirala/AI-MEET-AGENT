@@ -4,10 +4,37 @@ import { SocketEvents, WebRTCSignal } from '../types';
 class SocketService {
   private socket: Socket | null = null;
   private currentMeetingId: string | null = null;
+  private isConnecting: boolean = false;
 
   connect(token: string): Promise<void> {
     return new Promise((resolve, reject) => {
+      // If already connected, just resolve
+      if (this.socket?.connected) {
+        console.log('Socket already connected, reusing existing connection');
+        resolve();
+        return;
+      }
+      
+      // If currently connecting, wait for it
+      if (this.isConnecting) {
+        console.log('Socket connection in progress, waiting...');
+        const checkConnection = setInterval(() => {
+          if (this.socket?.connected) {
+            clearInterval(checkConnection);
+            resolve();
+          }
+        }, 100);
+        return;
+      }
+      
+      this.isConnecting = true;
       const serverUrl = process.env.REACT_APP_SOCKET_URL || 'http://localhost:5000';
+      
+      // Disconnect existing socket if any
+      if (this.socket) {
+        this.socket.disconnect();
+        this.socket = null;
+      }
       
       this.socket = io(serverUrl, {
         auth: {
@@ -18,11 +45,13 @@ class SocketService {
 
       this.socket.on('connect', () => {
         console.log('Connected to server');
+        this.isConnecting = false;
         resolve();
       });
 
       this.socket.on('connect_error', (error) => {
         console.error('Connection error:', error);
+        this.isConnecting = false;
         reject(error);
       });
 
@@ -38,12 +67,18 @@ class SocketService {
       this.socket.disconnect();
       this.socket = null;
       this.currentMeetingId = null;
+      this.isConnecting = false;
     }
   }
 
   // Meeting room management
   joinMeeting(meetingId: string): void {
     if (this.socket) {
+      // Prevent duplicate join if already in this meeting
+      if (this.currentMeetingId === meetingId) {
+        console.log(`Already in meeting ${meetingId}, skipping duplicate join`);
+        return;
+      }
       this.currentMeetingId = meetingId;
       this.socket.emit(SocketEvents.JOIN_MEETING, meetingId);
     }
@@ -78,25 +113,25 @@ class SocketService {
   // Meeting controls
   toggleAudio(meetingId: string, enabled: boolean, userId?: string): void {
     if (this.socket) {
-      this.socket.emit(SocketEvents.TOGGLE_AUDIO, { meetingId, audioEnabled: enabled, userId });
+      this.socket.emit(SocketEvents.TOGGLE_AUDIO, { meetingId, audioEnabled: enabled, odId: userId });
     }
   }
 
   toggleVideo(meetingId: string, enabled: boolean, userId?: string): void {
     if (this.socket) {
-      this.socket.emit(SocketEvents.TOGGLE_VIDEO, { meetingId, videoEnabled: enabled, userId });
+      this.socket.emit(SocketEvents.TOGGLE_VIDEO, { meetingId, videoEnabled: enabled, odId: userId });
     }
   }
 
   startScreenShare(meetingId: string, streamId: string, userId?: string): void {
     if (this.socket) {
-      this.socket.emit(SocketEvents.SCREEN_SHARE, { meetingId, streamId, active: true, userId });
+      this.socket.emit(SocketEvents.SCREEN_SHARE, { meetingId, streamId, active: true, odId: userId });
     }
   }
 
   stopScreenShare(meetingId: string, userId?: string): void {
     if (this.socket) {
-      this.socket.emit(SocketEvents.SCREEN_SHARE, { meetingId, active: false, userId });
+      this.socket.emit(SocketEvents.SCREEN_SHARE, { meetingId, active: false, odId: userId });
     }
   }
 

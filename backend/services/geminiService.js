@@ -81,9 +81,12 @@ class GeminiService {
     
     const attendeeList = attendees.map(a => `- ${a.name} (${a.email}) - ${a.role}`).join('\n');
     
-    const transcriptText = transcripts.map(t => 
-      `[${t.speakerName}] (${new Date(t.startTime).toLocaleTimeString()}): ${t.text}`
-    ).join('\n');
+    // Handle both startTime and timestamp fields for compatibility
+    const transcriptText = transcripts.map(t => {
+      const time = t.startTime || t.timestamp;
+      const timeStr = time ? new Date(time).toLocaleTimeString() : 'Unknown';
+      return `[${t.speakerName}] (${timeStr}): ${t.text}`;
+    }).join('\n');
 
     return `You are an expert meeting analyst. Analyze the following meeting transcript and generate comprehensive meeting minutes.
 

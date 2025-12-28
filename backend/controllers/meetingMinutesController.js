@@ -12,6 +12,13 @@ const meetingMinutesController = {
       const { meetingId } = req.params;
       const { transcripts } = req.body; // Optional: transcripts from client
 
+      console.log(`[MOM] Generate minutes request for meeting ${meetingId}`);
+      console.log(`[MOM] Received ${(transcripts || []).length} transcripts from client`);
+      
+      if (transcripts && transcripts.length > 0) {
+        console.log('[MOM] First transcript sample:', JSON.stringify(transcripts[0], null, 2));
+      }
+
       const meeting = await Meeting.findOne({ meetingId })
         .populate('host', 'username email')
         .populate('participants.user', 'username email');
@@ -57,10 +64,26 @@ const meetingMinutesController = {
             : null
         }));
 
-      // Calculate meeting duration
-      const startTime = meeting.scheduledFor || meeting.createdAt;
+      // Calculate meeting duration based on earliest participant join
       const endTime = new Date();
+      let startTime = meeting.scheduledFor || meeting.createdAt;
+      
+      // Find the earliest joinedAt time from participants for more accurate duration
+      if (meeting.participants && meeting.participants.length > 0) {
+        const joinTimes = meeting.participants
+          .filter(p => p.joinedAt)
+          .map(p => new Date(p.joinedAt));
+        
+        if (joinTimes.length > 0) {
+          const earliestJoin = new Date(Math.min(...joinTimes));
+          if (earliestJoin < new Date(startTime)) {
+            startTime = earliestJoin;
+          }
+        }
+      }
+      
       const duration = Math.round((endTime - new Date(startTime)) / 60000);
+      console.log(`[MOM] Meeting duration calculated: ${duration} minutes (start: ${startTime}, end: ${endTime})`);
 
       // Create or update meeting minutes record
       const minutesData = {
@@ -97,15 +120,27 @@ const meetingMinutesController = {
           date: startTime,
           duration: duration,
           attendeesCount: attendees.length,
-          transcriptsCount: (transcripts || []).length
+          transcriptsCount: (transcripts || []).length,
+          transcriptsSample: (transcripts || []).slice(0, 3).map(t => ({
+            speaker: t.speakerName,
+            textLength: t.text?.length || 0,
+            hasTimestamp: !!(t.timestamp || t.startTime)
+          }))
         });
+        
+        // Normalize transcripts to ensure consistent field names
+        const normalizedTranscripts = (transcripts || []).map(t => ({
+          speakerName: t.speakerName || t.speaker || 'Unknown',
+          text: t.text || '',
+          startTime: t.startTime || t.timestamp || new Date()
+        }));
         
         const aiMinutes = await geminiService.generateMeetingMinutes({
           title: meeting.title,
           date: startTime,
           duration: duration,
           attendees: attendees,
-          transcripts: transcripts || []
+          transcripts: normalizedTranscripts
         });
 
         console.log('AI minutes generated successfully');

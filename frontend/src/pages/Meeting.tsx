@@ -58,7 +58,6 @@ const MeetingPage: React.FC = () => {
   const [unreadMessages, setUnreadMessages] = useState(0);
 
   const localVideoRef = useRef<HTMLVideoElement>(null);
-  const screenVideoRef = useRef<HTMLVideoElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -99,6 +98,22 @@ const MeetingPage: React.FC = () => {
           newMap.delete(userId);
           return newMap;
         });
+      };
+
+      // Handle screen share started - update local video to show screen
+      webrtcService.onScreenShareStarted = (stream: MediaStream) => {
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = stream;
+        }
+      };
+
+      // Handle screen share ended via browser UI - restore camera
+      webrtcService.onScreenShareEnded = () => {
+        setIsScreenSharing(false);
+        // Restore local video to camera stream
+        if (localVideoRef.current && webrtcService.getLocalStream()) {
+          localVideoRef.current.srcObject = webrtcService.getLocalStream();
+        }
       };
 
       // Fetch chat history
@@ -164,8 +179,8 @@ const MeetingPage: React.FC = () => {
       const odId = typeof data === 'string' ? data : (data.odId || data.socketId);
       const username = typeof data === 'object' ? data.username : 'Someone';
       
-      // Create peer connection for new user using their odId
-      webrtcService.createOffer(odId);
+      // Force new peer connection for rejoining user (handles leave/rejoin scenario)
+      webrtcService.createOffer(odId, true);
       
       // Add notification for new participant
       addNotification('join', `${username} joined the meeting`);
@@ -183,9 +198,9 @@ const MeetingPage: React.FC = () => {
     // Handle existing participants when joining a meeting
     socketService.onExistingParticipants((participants) => {
       console.log('Existing participants:', participants);
-      // Create peer connections for all existing participants
+      // Create fresh peer connections for all existing participants
       participants.forEach(participant => {
-        webrtcService.createOffer(participant.odId);
+        webrtcService.createOffer(participant.odId, true);
       });
     });
 
@@ -362,20 +377,21 @@ const MeetingPage: React.FC = () => {
   }, [meetingId, initializeMeeting, setupSocketListeners, user?._id]);
 
   useEffect(() => {
-    console.log('Local video effect - localStreamReady:', localStreamReady, 'isVideoEnabled:', isVideoEnabled);
-    if (localVideoRef.current && webrtcService.getLocalStream()) {
-      console.log('Setting local video stream');
-      localVideoRef.current.srcObject = webrtcService.getLocalStream();
+    console.log('Local video effect - localStreamReady:', localStreamReady, 'isVideoEnabled:', isVideoEnabled, 'isScreenSharing:', isScreenSharing);
+    if (localVideoRef.current) {
+      // If screen sharing is active, keep showing the screen stream
+      // Otherwise show the camera stream
+      if (isScreenSharing && webrtcService.getScreenStream()) {
+        console.log('Setting local video to screen share stream');
+        localVideoRef.current.srcObject = webrtcService.getScreenStream();
+      } else if (webrtcService.getLocalStream()) {
+        console.log('Setting local video to camera stream');
+        localVideoRef.current.srcObject = webrtcService.getLocalStream();
+      }
     } else {
-      console.log('No local video stream available');
+      console.log('No local video ref available');
     }
-  }, [localStreamReady, isVideoEnabled]);
-
-  useEffect(() => {
-    if (screenVideoRef.current && webrtcService.getScreenStream()) {
-      screenVideoRef.current.srcObject = webrtcService.getScreenStream();
-    }
-  }, [isScreenSharing]);
+  }, [localStreamReady, isVideoEnabled, isScreenSharing]);
 
   // Speech Recognition Effect - Always active for transcript capture (for MOM generation)
   useEffect(() => {
@@ -404,10 +420,17 @@ const MeetingPage: React.FC = () => {
       recognition.interimResults = true;
       recognition.lang = 'en-US';
 
+      recognition.onstart = () => {
+        console.log('Speech recognition started successfully');
+      };
+
       recognition.onresult = (event: any) => {
         const current = event.resultIndex;
         const transcript = event.results[current][0].transcript;
         const isFinal = event.results[current].isFinal;
+        const confidence = event.results[current][0].confidence;
+
+        console.log(`Speech detected: "${transcript}" (final: ${isFinal}, confidence: ${confidence})`);
 
         if (isFinal && transcript.trim()) {
           const newSubtitle = {
@@ -416,34 +439,44 @@ const MeetingPage: React.FC = () => {
             timestamp: new Date()
           };
           
+          console.log('Adding transcript:', newSubtitle);
           // Keep all transcripts for MOM generation
-          setSubtitles(prev => [...prev, newSubtitle]);
+          setSubtitles(prev => {
+            const updated = [...prev, newSubtitle];
+            console.log(`Total transcripts: ${updated.length}`);
+            return updated;
+          });
         }
       };
 
       recognition.onerror = (event: any) => {
-        console.error('Speech recognition error:', event.error);
+        console.error('Speech recognition error:', event.error, event.message);
         // Restart on certain errors
-        if (event.error === 'no-speech' || event.error === 'aborted') {
+        if (event.error === 'no-speech' || event.error === 'aborted' || event.error === 'network') {
           setTimeout(() => {
             if (recognitionRef.current) {
               try {
                 recognitionRef.current.start();
+                console.log('Speech recognition restarted after error');
               } catch (e) {
                 // Already started
               }
             }
           }, 1000);
+        } else if (event.error === 'not-allowed') {
+          console.error('Microphone permission denied for speech recognition');
         }
       };
 
       recognition.onend = () => {
+        console.log('Speech recognition ended, attempting restart...');
         // Auto-restart recognition if meeting is still active
         if (recognitionRef.current) {
           try {
             recognitionRef.current.start();
           } catch (e) {
             // Already started or other error
+            console.log('Could not restart speech recognition:', e);
           }
         }
       };
@@ -453,12 +486,12 @@ const MeetingPage: React.FC = () => {
       // Start recognition
       try {
         recognition.start();
-        console.log('Speech recognition started automatically for transcript capture');
+        console.log('Speech recognition initialized for transcript capture');
       } catch (error) {
         console.error('Failed to start speech recognition:', error);
       }
     } else {
-      console.warn('Speech recognition not supported in this browser');
+      console.warn('Speech recognition not supported in this browser. Transcripts will not be captured automatically.');
     }
 
     // Cleanup
@@ -467,6 +500,7 @@ const MeetingPage: React.FC = () => {
         try {
           recognitionRef.current.stop();
           recognitionRef.current = null;
+          console.log('Speech recognition stopped');
         } catch (error) {
           console.error('Error stopping recognition:', error);
         }
@@ -553,12 +587,16 @@ const MeetingPage: React.FC = () => {
   const toggleScreenShare = async () => {
     if (!isScreenSharing) {
       try {
-        await webrtcService.startScreenShare();
+        const screenStream = await webrtcService.startScreenShare();
         setIsScreenSharing(true);
         
+        // Update local video to show screen share
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = screenStream;
+        }
+        
+        // Update local participant state
         if (meeting && user) {
-          socketService.startScreenShare(meeting.meetingId, 'screen-stream-id', user._id);
-          // Update local participant state
           setMeeting(prev => {
             if (!prev) return prev;
             return {
@@ -582,9 +620,13 @@ const MeetingPage: React.FC = () => {
       webrtcService.stopScreenShare();
       setIsScreenSharing(false);
       
+      // Restore local video to camera stream
+      if (localVideoRef.current && webrtcService.getLocalStream()) {
+        localVideoRef.current.srcObject = webrtcService.getLocalStream();
+      }
+      
+      // Update local participant state
       if (meeting && user) {
-        socketService.stopScreenShare(meeting.meetingId, user._id);
-        // Update local participant state
         setMeeting(prev => {
           if (!prev) return prev;
           return {
@@ -606,15 +648,25 @@ const MeetingPage: React.FC = () => {
 
   // Permission helpers - use useMemo to prevent unnecessary recalculations
   const currentParticipant = meeting?.participants.find(
-    p => p.user._id === user?._id && p.status === 'joined'
+    p => {
+      const participantUserId = typeof p.user === 'string' ? p.user : p.user?._id;
+      return participantUserId === user?._id && p.status === 'joined';
+    }
   );
   
   // Also check if user is the meeting host by comparing host ID
-  const isHost = currentParticipant?.role === 'host' || 
-    (meeting?.host && (
-      (typeof meeting.host === 'string' && meeting.host === user?._id) ||
-      (typeof meeting.host === 'object' && meeting.host._id === user?._id)
-    ));
+  const hostId = meeting?.host && (typeof meeting.host === 'string' ? meeting.host : meeting.host._id);
+  const isHost = currentParticipant?.role === 'host' || hostId === user?._id;
+  
+  // Debug log for host status
+  console.log('Host check:', {
+    isHost,
+    currentParticipantRole: currentParticipant?.role,
+    hostId,
+    userId: user?._id,
+    participantsCount: meeting?.participants?.length
+  });
+  
   const isCoHost = currentParticipant?.role === 'co-host';
   const canRecord = isHost || isCoHost || currentParticipant?.permissions?.canRecord;
   // Host can always chat, others depend on settings
@@ -765,13 +817,25 @@ const MeetingPage: React.FC = () => {
   };
 
   const endMeeting = useCallback(async () => {
-    if (!meeting) return;
+    console.log('endMeeting function called');
+    console.log('meeting:', meeting?.meetingId);
+    console.log('subtitles count:', subtitles.length);
+    
+    if (!meeting) {
+      console.log('No meeting object, returning');
+      return;
+    }
     
     const confirmed = window.confirm(
       'Are you sure you want to end this meeting for everyone? Meeting minutes will be generated and sent to all participants.'
     );
     
-    if (!confirmed) return;
+    if (!confirmed) {
+      console.log('User cancelled end meeting');
+      return;
+    }
+
+    console.log('User confirmed, proceeding to end meeting...');
 
     try {
       toast.loading('Ending meeting and generating minutes...', { id: 'end-meeting' });
@@ -826,10 +890,13 @@ const MeetingPage: React.FC = () => {
           console.warn('No transcripts captured! Make sure microphone is enabled and speech recognition is working.');
         }
         
-        await apiService.generateMeetingMinutes(meeting.meetingId, transcriptsData);
+        console.log('Calling generateMeetingMinutes API...');
+        const momResponse = await apiService.generateMeetingMinutes(meeting.meetingId, transcriptsData);
+        console.log('MOM generation response:', momResponse);
         toast.success(`Meeting ended! Minutes generated with ${transcriptsData.length} transcript entries.`, { id: 'end-meeting' });
-      } catch (minutesError) {
+      } catch (minutesError: any) {
         console.error('Error generating minutes:', minutesError);
+        console.error('Error details:', minutesError?.response?.data || minutesError?.message);
         toast.success('Meeting ended! (Minutes generation may have failed)', { id: 'end-meeting' });
       }
       
@@ -934,6 +1001,10 @@ const MeetingPage: React.FC = () => {
         <div className="flex items-center justify-between px-4 py-3">
           <div className="flex items-center space-x-4">
             <h1 className="text-lg font-semibold">{meeting?.title}</h1>
+            {/* Host indicator */}
+            {isHost && (
+              <span className="bg-primary-600 text-white text-xs px-2 py-1 rounded">HOST</span>
+            )}
             <div className="flex items-center space-x-2 text-sm text-secondary-400">
               <UsersIcon className="w-4 h-4" />
               <span>{participantCount}</span>
@@ -1228,46 +1299,49 @@ const MeetingPage: React.FC = () => {
               You
               {isHandRaised && <HandRaisedIcon className="inline w-4 h-4 ml-1 text-yellow-400" />}
             </div>
-            {!isVideoEnabled && (
+            {!isVideoEnabled && !isScreenSharing && (
               <div className="absolute inset-0 bg-secondary-800 flex items-center justify-center">
                 <UserCircleIcon className="w-16 h-16 text-secondary-600" />
               </div>
             )}
-          </div>
-
-          {/* Screen Share */}
-          {isScreenSharing && (
-            <div className="video-container col-span-full">
-              <video
-                ref={screenVideoRef}
-                autoPlay
-                playsInline
-                className="w-full h-full object-cover"
-              />
+            {isScreenSharing && (
               <div className="absolute top-4 left-4 bg-green-600 px-3 py-1 rounded text-sm">
                 You are sharing your screen
               </div>
-            </div>
-          )}
+            )}
+          </div>
 
           {/* Remote Videos */}
-          {Array.from(remoteStreams.entries()).map(([userId, stream]) => (
-            <div key={userId} className="video-container relative">
-              <video
-                autoPlay
-                playsInline
-                className="w-full h-full object-cover"
-                ref={(video) => {
-                  if (video && video.srcObject !== stream) {
-                    video.srcObject = stream;
-                  }
-                }}
-              />
-              <div className="absolute bottom-4 left-4 bg-black/50 px-2 py-1 rounded text-sm">
-                User {userId.slice(0, 8)}
+          {Array.from(remoteStreams.entries()).map(([odId, stream]) => {
+            // Look up username from participants list
+            const participant = meeting?.participants.find(p => p.user._id === odId);
+            const displayName = participant?.user.username || `User ${odId.slice(0, 8)}`;
+            const participantMediaState = participant?.mediaState;
+            
+            return (
+              <div key={odId} className="video-container relative">
+                <video
+                  autoPlay
+                  playsInline
+                  className="w-full h-full object-cover"
+                  ref={(video) => {
+                    if (video && video.srcObject !== stream) {
+                      video.srcObject = stream;
+                    }
+                  }}
+                />
+                <div className="absolute bottom-4 left-4 bg-black/50 px-2 py-1 rounded text-sm">
+                  {displayName}
+                  {participantMediaState?.handRaised && <HandRaisedIcon className="inline w-4 h-4 ml-1 text-yellow-400" />}
+                </div>
+                {participantMediaState?.videoEnabled === false && (
+                  <div className="absolute inset-0 bg-secondary-800 flex items-center justify-center">
+                    <UserCircleIcon className="w-16 h-16 text-secondary-600" />
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
 
           {/* No empty slots - only show actual participants */}
         </div>
@@ -1451,6 +1525,7 @@ const MeetingPage: React.FC = () => {
           {isHost ? (
             <button
               onClick={(e) => {
+                console.log('End Meeting button clicked, isHost:', isHost);
                 e.preventDefault();
                 e.stopPropagation();
                 endMeeting();
@@ -1464,6 +1539,7 @@ const MeetingPage: React.FC = () => {
           ) : (
             <button
               onClick={(e) => {
+                console.log('Leave button clicked, isHost:', isHost);
                 e.preventDefault();
                 e.stopPropagation();
                 leaveMeeting();

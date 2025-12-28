@@ -92,16 +92,38 @@ class WebRTCService {
     try {
       const constraints: DisplayMediaStreamOptions = {
         video: true,
-        audio: true,
+        audio: false, // Audio from screen share can cause echo issues
       };
 
       this.screenStream = await navigator.mediaDevices.getDisplayMedia(constraints);
       this.isScreenSharing = true;
 
-      // Handle screen share end
-      this.screenStream.getVideoTracks()[0].onended = () => {
+      // Replace video track in all peer connections with screen share track
+      const screenVideoTrack = this.screenStream.getVideoTracks()[0];
+      if (screenVideoTrack) {
+        this.peerConnections.forEach((pc, odId) => {
+          const videoSender = pc.getSenders().find(s => s.track?.kind === 'video');
+          if (videoSender) {
+            console.log(`Replacing video track with screen share for peer ${odId}`);
+            videoSender.replaceTrack(screenVideoTrack);
+          }
+        });
+      }
+
+      // Handle screen share end (user clicks stop sharing in browser UI)
+      screenVideoTrack.onended = () => {
         this.stopScreenShare();
+        // Notify UI that screen share ended
+        this.onScreenShareEnded?.();
       };
+
+      // Notify UI that screen share started (for updating local video display)
+      this.onScreenShareStarted?.(this.screenStream);
+
+      // Notify others that screen sharing started
+      if (this.currentMeetingId && this.currentUserId) {
+        socketService.startScreenShare(this.currentMeetingId, 'screen-stream', this.currentUserId);
+      }
 
       return this.screenStream;
     } catch (error) {
@@ -112,13 +134,28 @@ class WebRTCService {
 
   stopScreenShare(): void {
     if (this.screenStream) {
-      this.screenStream.getTracks().forEach((track: MediaStreamTrack) => track.stop());
+      // Restore original video track in all peer connections
+      const localVideoTrack = this.localStream?.getVideoTracks()[0];
+      
+      this.peerConnections.forEach((pc, odId) => {
+        const videoSender = pc.getSenders().find(s => s.track?.kind === 'video');
+        if (videoSender && localVideoTrack) {
+          console.log(`Restoring video track for peer ${odId}`);
+          videoSender.replaceTrack(localVideoTrack);
+        }
+      });
+
+      // Stop screen share tracks
+      this.screenStream.getTracks().forEach((track: MediaStreamTrack) => {
+        track.stop();
+      });
+      
       this.screenStream = null;
       this.isScreenSharing = false;
 
       // Notify others that screen sharing stopped
-      if (this.currentMeetingId) {
-        socketService.stopScreenShare(this.currentMeetingId);
+      if (this.currentMeetingId && this.currentUserId) {
+        socketService.stopScreenShare(this.currentMeetingId, this.currentUserId);
       }
     }
   }
@@ -132,6 +169,9 @@ class WebRTCService {
         pc.addTrack(track, this.localStream!);
       });
     }
+
+    // Note: Screen share tracks are NOT added here to avoid m-line ordering issues
+    // Screen sharing is handled separately via replaceTrack or renegotiation
 
     // Handle remote stream
     pc.ontrack = (event) => {
@@ -174,13 +214,23 @@ class WebRTCService {
       }
     };
 
+    // Note: onnegotiationneeded is intentionally NOT set here to avoid m-line ordering issues
+    // Renegotiation is handled manually when needed
+
     this.peerConnections.set(userId, pc);
     return pc;
   }
 
-  async createOffer(userId: string): Promise<void> {
+  async createOffer(userId: string, forceNew: boolean = false): Promise<void> {
     try {
-      console.log(`Creating offer for ${userId}`);
+      console.log(`Creating offer for ${userId}, forceNew: ${forceNew}`);
+      
+      // If forceNew, clean up any existing connection first
+      if (forceNew && this.peerConnections.has(userId)) {
+        console.log(`Force cleaning up existing connection for ${userId}`);
+        this.cleanupPeerConnection(userId);
+      }
+      
       const pc = this.getOrCreatePeerConnection(userId);
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
@@ -203,6 +253,25 @@ class WebRTCService {
   async handleOffer(data: WebRTCSignal): Promise<void> {
     try {
       console.log(`Received offer from ${data.from}`);
+      
+      // Clean up any existing stale connection before handling new offer
+      const existingPc = this.peerConnections.get(data.from);
+      if (existingPc) {
+        const state = existingPc.connectionState;
+        const signalingState = existingPc.signalingState;
+        
+        // If we have an existing connection that's not in a good state, clean it up
+        if (state === 'closed' || state === 'failed' || state === 'disconnected') {
+          console.log(`Cleaning up stale connection from ${data.from} before handling offer`);
+          this.cleanupPeerConnection(data.from);
+        } else if (signalingState !== 'stable') {
+          // Handle glare condition - if we're not stable, we might have a collision
+          console.log(`Handling offer collision from ${data.from}, signalingState: ${signalingState}`);
+          // Clean up and create fresh connection
+          this.cleanupPeerConnection(data.from);
+        }
+      }
+      
       const pc = this.getOrCreatePeerConnection(data.from);
       await pc.setRemoteDescription(new RTCSessionDescription(data.data));
       const answer = await pc.createAnswer();
@@ -220,6 +289,8 @@ class WebRTCService {
       }
     } catch (error) {
       console.error('Error handling offer:', error);
+      // On error, clean up and let the other side retry
+      this.cleanupPeerConnection(data.from);
     }
   }
 
@@ -245,6 +316,21 @@ class WebRTCService {
 
   private getOrCreatePeerConnection(userId: string): RTCPeerConnection {
     let pc = this.peerConnections.get(userId);
+    
+    // Check if existing connection is still usable
+    if (pc) {
+      const state = pc.connectionState;
+      const iceState = pc.iceConnectionState;
+      
+      // If connection is closed, failed, or disconnected, clean it up and create new one
+      if (state === 'closed' || state === 'failed' || state === 'disconnected' ||
+          iceState === 'closed' || iceState === 'failed' || iceState === 'disconnected') {
+        console.log(`Cleaning up stale connection for ${userId} (state: ${state}, ice: ${iceState})`);
+        this.cleanupPeerConnection(userId);
+        pc = undefined;
+      }
+    }
+    
     if (!pc) {
       pc = this.createPeerConnection(userId);
     }
@@ -304,6 +390,8 @@ class WebRTCService {
   // Event callbacks
   onRemoteStreamAdded?: (userId: string, stream: MediaStream) => void;
   onRemoteStreamRemoved?: (userId: string) => void;
+  onScreenShareStarted?: (stream: MediaStream) => void;
+  onScreenShareEnded?: () => void;
 
   // Getters
   getLocalStream(): MediaStream | null {

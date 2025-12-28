@@ -128,6 +128,9 @@ const meetingController = {
         });
       }
 
+      // Check if user is the host
+      const isHost = meeting.host.toString() === req.userId.toString();
+
       // Add participant
       const existingParticipant = meeting.participants.find(p => 
         p.user.toString() === req.userId.toString()
@@ -138,7 +141,7 @@ const meetingController = {
         // Never joined this meeting before
         meeting.participants.push({
           user: req.userId,
-          role: 'participant',
+          role: isHost ? 'host' : 'participant', // Set role based on whether user is host
           joinedAt: new Date(),
           status: 'joined'
         });
@@ -147,7 +150,16 @@ const meetingController = {
         // Rejoining after leaving
         existingParticipant.status = 'joined';
         existingParticipant.joinedAt = new Date();
+        // Ensure host role is preserved
+        if (isHost && existingParticipant.role !== 'host') {
+          existingParticipant.role = 'host';
+        }
         // Don't increment statistics - they've already attended before
+      } else {
+        // Already joined - ensure host role is correct
+        if (isHost && existingParticipant.role !== 'host') {
+          existingParticipant.role = 'host';
+        }
       }
 
       // Update user statistics (only on first time ever joining this meeting)
@@ -335,6 +347,7 @@ const meetingController = {
   async endMeeting(req, res) {
     try {
       const { meetingId } = req.params;
+      console.log(`[END MEETING] Ending meeting ${meetingId}`);
 
       const meeting = await Meeting.findOne({ meetingId });
 
@@ -355,16 +368,51 @@ const meetingController = {
 
       meeting.status = 'ended';
       
-      // Calculate total duration
-      const startTime = meeting.scheduledFor;
+      // Calculate total duration based on when first participant joined
       const endTime = new Date();
-      meeting.statistics.totalDuration = Math.round((endTime - startTime) / 60000); // in minutes
+      let startTime = meeting.scheduledFor ? new Date(meeting.scheduledFor) : null;
+      
+      console.log(`[END MEETING] Initial startTime from scheduledFor: ${startTime}`);
+      console.log(`[END MEETING] Participants count: ${meeting.participants?.length}`);
+      
+      // Find the earliest joinedAt time from participants for more accurate duration
+      if (meeting.participants && meeting.participants.length > 0) {
+        const joinTimes = meeting.participants
+          .filter(p => p.joinedAt)
+          .map(p => new Date(p.joinedAt));
+        
+        console.log(`[END MEETING] Join times found: ${joinTimes.length}`);
+        
+        if (joinTimes.length > 0) {
+          const earliestJoin = new Date(Math.min(...joinTimes));
+          console.log(`[END MEETING] Earliest join: ${earliestJoin}`);
+          // Use the earliest join time if it's valid
+          if (!startTime || earliestJoin < startTime) {
+            startTime = earliestJoin;
+          }
+        }
+      }
+      
+      // Fallback to createdAt if no valid start time
+      if (!startTime) {
+        startTime = new Date(meeting.createdAt);
+        console.log(`[END MEETING] Using createdAt as fallback: ${startTime}`);
+      }
+      
+      const durationMs = endTime.getTime() - startTime.getTime();
+      const durationMinutes = Math.round(durationMs / 60000);
+      
+      console.log(`[END MEETING] Duration calculation: ${endTime} - ${startTime} = ${durationMs}ms = ${durationMinutes} minutes`);
+      
+      meeting.statistics.totalDuration = durationMinutes;
 
       await meeting.save();
+      console.log(`[END MEETING] Meeting saved with duration: ${meeting.statistics.totalDuration} minutes`);
 
       res.json({
         success: true,
-        message: 'Meeting ended successfully'
+        message: 'Meeting ended successfully',
+        data: { duration: meeting.statistics.totalDuration }
       });
     } catch (error) {
       console.error('End meeting error:', error);

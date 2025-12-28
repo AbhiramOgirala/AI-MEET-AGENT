@@ -105,6 +105,28 @@ io.on('connection', (socket) => {
 
   // Join meeting room
   socket.on('join-meeting', async (meetingId) => {
+    // Check if this socket already joined this meeting
+    if (socket.meetingId === meetingId) {
+      console.log(`Socket ${socket.id} already in meeting ${meetingId}, skipping duplicate join`);
+      return;
+    }
+    
+    // Check if this user already has another socket in the same meeting BEFORE joining
+    let userAlreadyInMeeting = false;
+    if (socket.userId) {
+      const room = io.sockets.adapter.rooms.get(meetingId);
+      if (room) {
+        for (const socketId of room) {
+          const existingSocket = io.sockets.sockets.get(socketId);
+          if (existingSocket && existingSocket.userId === socket.userId) {
+            userAlreadyInMeeting = true;
+            console.log(`User ${socket.userId} already in meeting ${meetingId} via socket ${socketId}, not sending duplicate join notification`);
+            break;
+          }
+        }
+      }
+    }
+    
     socket.join(meetingId);
     socket.meetingId = meetingId;
     
@@ -119,41 +141,49 @@ io.on('connection', (socket) => {
         const User = require('./models/User');
         const user = await User.findById(socket.userId).select('username avatar');
         
-        // Notify others with user info - include both socketId and odId for WebRTC
-        socket.to(meetingId).emit('user-joined', {
-          socketId: socket.id,
-          odId: socket.userId,
-          username: user?.username || 'Someone'
-        });
-        
-        console.log(`User ${user?.username} (${socket.userId}) joined meeting ${meetingId}`);
+        // Only notify others if this user wasn't already in the meeting
+        if (!userAlreadyInMeeting) {
+          // Notify others with user info - include both socketId and odId for WebRTC
+          socket.to(meetingId).emit('user-joined', {
+            socketId: socket.id,
+            odId: socket.userId,
+            username: user?.username || 'Someone'
+          });
+          
+          console.log(`User ${user?.username} (${socket.userId}) joined meeting ${meetingId}`);
+        }
         
         // Send existing participants to the new user so they can initiate connections
         const room = io.sockets.adapter.rooms.get(meetingId);
+        const existingUsers = [];
         if (room) {
-          const existingUsers = [];
           for (const socketId of room) {
             if (socketId !== socket.id) {
               const existingSocket = io.sockets.sockets.get(socketId);
               if (existingSocket && existingSocket.userId) {
-                const existingUser = await User.findById(existingSocket.userId).select('username');
-                existingUsers.push({
-                  socketId: existingSocket.id,
-                  odId: existingSocket.userId,
-                  username: existingUser?.username || 'Unknown'
-                });
+                // Don't include the same user's other sockets
+                if (existingSocket.userId !== socket.userId) {
+                  const existingUser = await User.findById(existingSocket.userId).select('username');
+                  existingUsers.push({
+                    socketId: existingSocket.id,
+                    odId: existingSocket.userId,
+                    username: existingUser?.username || 'Unknown'
+                  });
+                }
               }
             }
           }
-          if (existingUsers.length > 0) {
-            socket.emit('existing-participants', existingUsers);
-          }
+        }
+        if (existingUsers.length > 0) {
+          socket.emit('existing-participants', existingUsers);
         }
       } catch (err) {
-        socket.to(meetingId).emit('user-joined', {
-          socketId: socket.id,
-          odId: socket.userId
-        });
+        if (!userAlreadyInMeeting) {
+          socket.to(meetingId).emit('user-joined', {
+            socketId: socket.id,
+            odId: socket.userId
+          });
+        }
       }
     } else {
       socket.to(meetingId).emit('user-joined', {
@@ -209,15 +239,30 @@ io.on('connection', (socket) => {
 
   // Meeting controls
   socket.on('toggle-audio', (data) => {
-    socket.to(data.meetingId).emit('audio-toggled', data);
+    // Ensure odId is set for participant matching on frontend
+    const audioData = {
+      ...data,
+      odId: data.odId || data.userId || socket.userId
+    };
+    socket.to(data.meetingId).emit('audio-toggled', audioData);
   });
 
   socket.on('toggle-video', (data) => {
-    socket.to(data.meetingId).emit('video-toggled', data);
+    // Ensure odId is set for participant matching on frontend
+    const videoData = {
+      ...data,
+      odId: data.odId || data.userId || socket.userId
+    };
+    socket.to(data.meetingId).emit('video-toggled', videoData);
   });
 
   socket.on('screen-share', (data) => {
-    socket.to(data.meetingId).emit('screen-share', data);
+    // Ensure odId is set for participant matching on frontend
+    const screenData = {
+      ...data,
+      odId: data.odId || data.userId || socket.userId
+    };
+    socket.to(data.meetingId).emit('screen-share', screenData);
   });
 
   // Host controls
