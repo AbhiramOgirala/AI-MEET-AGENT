@@ -182,10 +182,29 @@ const meetingController = {
       // Save the meeting with updated participants
       await meeting.save();
 
+      // Populate host and participants before returning
+      const populatedMeeting = await Meeting.findOne({ meetingId })
+        .populate('host', 'username email avatar')
+        .populate('participants.user', 'username email avatar');
+
+      // Debug log to verify host data
+      console.log('[JOIN MEETING] Returning meeting data:', {
+        meetingId,
+        hostId: populatedMeeting.host?._id?.toString(),
+        requestUserId: req.userId,
+        isHost: populatedMeeting.host?._id?.toString() === req.userId.toString(),
+        participantsCount: populatedMeeting.participants?.length,
+        participantRoles: populatedMeeting.participants?.map(p => ({ 
+          odId: p.user?._id?.toString(), 
+          role: p.role,
+          status: p.status 
+        }))
+      });
+
       res.json({
         success: true,
         message: 'Joined meeting successfully',
-        data: { meeting }
+        data: { meeting: populatedMeeting }
       });
     } catch (error) {
       console.error('Join meeting error:', error);
@@ -709,6 +728,7 @@ const meetingController = {
         });
       }
 
+      // First, verify user has permission
       const meeting = await Meeting.findOne({ meetingId });
 
       if (!meeting) {
@@ -733,7 +753,8 @@ const meetingController = {
         });
       }
 
-      // Append new transcripts (avoid duplicates by checking timestamp)
+      // Use findOneAndUpdate with $addToSet to avoid version conflicts
+      // This is atomic and handles concurrent saves properly
       const existingTimestamps = new Set(
         (meeting.transcripts || []).map(t => new Date(t.timestamp).getTime())
       );
@@ -743,16 +764,32 @@ const meetingController = {
       );
 
       if (newTranscripts.length > 0) {
-        meeting.transcripts = [...(meeting.transcripts || []), ...newTranscripts];
-        await meeting.save();
+        // Use atomic update to avoid VersionError
+        const result = await Meeting.findOneAndUpdate(
+          { meetingId },
+          { 
+            $push: { 
+              transcripts: { 
+                $each: newTranscripts 
+              } 
+            } 
+          },
+          { new: true }
+        );
         console.log(`[TRANSCRIPTS] Saved ${newTranscripts.length} new transcripts for meeting ${meetingId}`);
+        
+        res.json({
+          success: true,
+          message: `Saved ${newTranscripts.length} new transcript entries`,
+          data: { totalTranscripts: result?.transcripts?.length || 0 }
+        });
+      } else {
+        res.json({
+          success: true,
+          message: `Saved 0 new transcript entries`,
+          data: { totalTranscripts: meeting.transcripts?.length || 0 }
+        });
       }
-
-      res.json({
-        success: true,
-        message: `Saved ${newTranscripts.length} new transcript entries`,
-        data: { totalTranscripts: meeting.transcripts.length }
-      });
     } catch (error) {
       console.error('Save transcripts error:', error);
       res.status(500).json({

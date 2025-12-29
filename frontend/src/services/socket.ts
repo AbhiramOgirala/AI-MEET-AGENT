@@ -175,6 +175,13 @@ class SocketService {
     }
   }
 
+  // End meeting - notify all participants
+  endMeeting(meetingId: string): void {
+    if (this.socket) {
+      this.socket.emit(SocketEvents.END_MEETING, { meetingId });
+    }
+  }
+
   // Send transcript to other participants
   sendTranscript(meetingId: string, transcript: { speaker: string; text: string; odId: string }): void {
     if (this.socket) {
@@ -285,6 +292,13 @@ class SocketService {
     }
   }
 
+  // Listen for meeting ended event
+  onMeetingEnded(callback: (data: { meetingId: string }) => void): void {
+    if (this.socket) {
+      this.socket.on(SocketEvents.MEETING_ENDED, callback);
+    }
+  }
+
   // Listen for transcripts from other participants
   onTranscript(callback: (data: { speaker: string; text: string; odId: string; timestamp: Date }) => void): void {
     if (this.socket) {
@@ -321,6 +335,7 @@ class SocketService {
       this.socket.off(SocketEvents.REACTION);
       this.socket.off(SocketEvents.SETTINGS_UPDATED);
       this.socket.off(SocketEvents.TRANSCRIPT_RECEIVED);
+      this.socket.off(SocketEvents.MEETING_ENDED);
       this.socket.off('existing-participants');
       this.socket.off('chat-error');
       this.socket.off('screen-share-error');

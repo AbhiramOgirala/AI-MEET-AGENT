@@ -208,6 +208,10 @@ export enum SocketEvents {
   HAND_RAISED = 'hand-raised',
   REACTION = 'reaction',
   
+  // Meeting lifecycle
+  END_MEETING = 'end-meeting',
+  MEETING_ENDED = 'meeting-ended',
+  
   // Transcripts (for real-time speech-to-text sharing)
   TRANSCRIPT = 'transcript',
   TRANSCRIPT_RECEIVED = 'transcript-received',

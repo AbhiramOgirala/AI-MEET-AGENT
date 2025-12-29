@@ -328,6 +328,14 @@ io.on('connection', (socket) => {
     });
   });
 
+  // End meeting - notify all participants
+  socket.on('end-meeting', (data) => {
+    const { meetingId } = data;
+    console.log(`[SOCKET] Meeting ended by host: ${meetingId}`);
+    // Broadcast to ALL participants in the room (including sender for confirmation)
+    io.to(meetingId).emit('meeting-ended', { meetingId });
+  });
+
   // Reactions
   socket.on('reaction', (data) => {
     socket.to(data.meetingId).emit('reaction', data);

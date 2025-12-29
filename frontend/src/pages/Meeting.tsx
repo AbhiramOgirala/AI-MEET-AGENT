@@ -97,8 +97,11 @@ const MeetingPage: React.FC = () => {
         setMeeting(response.data.meeting);
       }
 
-      // Join meeting
-      await apiService.joinMeeting(meetingId!);
+      // Join meeting and update state with the response (includes updated participant data)
+      const joinResponse = await apiService.joinMeeting(meetingId!);
+      if (joinResponse.success && joinResponse.data) {
+        setMeeting(joinResponse.data.meeting);
+      }
 
       // Initialize WebRTC - ensure TURN servers are loaded first
       await webrtcService.ensureIceServers();
@@ -431,6 +434,30 @@ const MeetingPage: React.FC = () => {
     socketService.onScreenShareError((data: { message: string }) => {
       toast.error(data.message || 'Screen sharing is disabled by the host');
       setIsScreenSharing(false);
+    });
+
+    // Listen for meeting ended event (for non-host participants)
+    socketService.onMeetingEnded((data: { meetingId: string }) => {
+      console.log('Meeting ended by host:', data);
+      
+      // Get current user from localStorage for comparison
+      const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
+      const currentMeeting = meetingRef.current;
+      
+      // Check if current user is the host - if so, they initiated the end, don't show toast
+      const isCurrentUserHost = currentMeeting?.host && (
+        (typeof currentMeeting.host === 'object' && currentMeeting.host._id === currentUser._id) ||
+        (typeof currentMeeting.host === 'string' && currentMeeting.host === currentUser._id)
+      );
+      
+      if (!isCurrentUserHost) {
+        toast('The host has ended this meeting', { icon: '👋' });
+        
+        // Clean up and navigate away
+        webrtcService.cleanup();
+        socketService.disconnect();
+        navigate('/dashboard');
+      }
     });
 
     // Listen for settings updates from host
@@ -1077,6 +1104,9 @@ const MeetingPage: React.FC = () => {
 
     console.log('User confirmed, proceeding to end meeting...');
     toast.loading('Ending meeting and generating minutes...', { id: 'end-meeting' });
+
+    // Notify all participants that the meeting is ending BEFORE cleanup
+    socketService.endMeeting(currentMeeting.meetingId);
 
     try {
       // Save any remaining transcripts first - this is important for MOM generation
