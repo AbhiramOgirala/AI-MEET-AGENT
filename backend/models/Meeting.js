@@ -39,6 +39,10 @@ const meetingSchema = new mongoose.Schema({
     enum: ['scheduled', 'ongoing', 'ended', 'cancelled'],
     default: 'scheduled'
   },
+  endedAt: {
+    type: Date,
+    default: null
+  },
   settings: {
     allowGuests: { type: Boolean, default: true },
     requirePassword: { type: Boolean, default: false },

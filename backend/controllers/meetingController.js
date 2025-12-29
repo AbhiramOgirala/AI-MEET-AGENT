@@ -1,7 +1,8 @@
 const Meeting = require('../models/Meeting');
 const User = require('../models/User');
-const { v4: uuidv4 } = require('uuid');
+const MeetingMinutes = require('../models/MeetingMinutes');
 const queueService = require('../services/queueService');
+const geminiService = require('../services/geminiService');
 
 const meetingController = {
   // Create a new meeting
@@ -156,9 +157,13 @@ const meetingController = {
         }
         // Don't increment statistics - they've already attended before
       } else {
-        // Already joined - ensure host role is correct
+        // Already joined - ensure host role is correct and update joinedAt if not set
         if (isHost && existingParticipant.role !== 'host') {
           existingParticipant.role = 'host';
+        }
+        // Ensure joinedAt is set (fix for meetings where host was added at creation without proper joinedAt)
+        if (!existingParticipant.joinedAt) {
+          existingParticipant.joinedAt = new Date();
         }
       }
 
@@ -349,7 +354,9 @@ const meetingController = {
       const { meetingId } = req.params;
       console.log(`[END MEETING] Ending meeting ${meetingId}`);
 
-      const meeting = await Meeting.findOne({ meetingId });
+      const meeting = await Meeting.findOne({ meetingId })
+        .populate('host', 'username email')
+        .populate('participants.user', 'username email');
 
       if (!meeting) {
         return res.status(404).json({
@@ -359,7 +366,7 @@ const meetingController = {
       }
 
       // Check if user is host
-      if (meeting.host.toString() !== req.userId.toString()) {
+      if (meeting.host._id.toString() !== req.userId.toString()) {
         return res.status(403).json({
           success: false,
           message: 'Only host can end meeting'
@@ -370,49 +377,196 @@ const meetingController = {
       
       // Calculate total duration based on when first participant joined
       const endTime = new Date();
-      let startTime = meeting.scheduledFor ? new Date(meeting.scheduledFor) : null;
+      let startTime = null;
       
-      console.log(`[END MEETING] Initial startTime from scheduledFor: ${startTime}`);
       console.log(`[END MEETING] Participants count: ${meeting.participants?.length}`);
       
-      // Find the earliest joinedAt time from participants for more accurate duration
+      // Find the earliest joinedAt time from participants for accurate duration
       if (meeting.participants && meeting.participants.length > 0) {
         const joinTimes = meeting.participants
           .filter(p => p.joinedAt)
           .map(p => new Date(p.joinedAt));
         
         console.log(`[END MEETING] Join times found: ${joinTimes.length}`);
+        joinTimes.forEach((t, i) => console.log(`[END MEETING] Join time ${i}: ${t}`));
         
         if (joinTimes.length > 0) {
-          const earliestJoin = new Date(Math.min(...joinTimes));
-          console.log(`[END MEETING] Earliest join: ${earliestJoin}`);
-          // Use the earliest join time if it's valid
-          if (!startTime || earliestJoin < startTime) {
-            startTime = earliestJoin;
-          }
+          startTime = new Date(Math.min(...joinTimes));
+          console.log(`[END MEETING] Using earliest join time: ${startTime}`);
         }
       }
       
-      // Fallback to createdAt if no valid start time
+      // Fallback to createdAt if no valid join times
       if (!startTime) {
         startTime = new Date(meeting.createdAt);
         console.log(`[END MEETING] Using createdAt as fallback: ${startTime}`);
       }
       
       const durationMs = endTime.getTime() - startTime.getTime();
-      const durationMinutes = Math.round(durationMs / 60000);
+      // Ensure minimum 1 minute if meeting actually happened
+      const durationMinutes = Math.max(1, Math.round(durationMs / 60000));
       
       console.log(`[END MEETING] Duration calculation: ${endTime} - ${startTime} = ${durationMs}ms = ${durationMinutes} minutes`);
       
-      meeting.statistics.totalDuration = durationMinutes;
+      // Update meeting with status, duration, and endedAt using findOneAndUpdate to ensure atomic update
+      const updatedMeeting = await Meeting.findOneAndUpdate(
+        { meetingId },
+        {
+          $set: {
+            status: 'ended',
+            endedAt: endTime,
+            'statistics.totalDuration': durationMinutes
+          }
+        },
+        { new: true }
+      ).populate('host', 'username email')
+       .populate('participants.user', 'username email');
+      
+      console.log(`[END MEETING] Meeting saved with duration: ${updatedMeeting.statistics.totalDuration} minutes`);
 
-      await meeting.save();
-      console.log(`[END MEETING] Meeting saved with duration: ${meeting.statistics.totalDuration} minutes`);
+      // Use the updated meeting for MOM generation
+      const meetingForMom = updatedMeeting;
+
+      // Automatically generate meeting minutes
+      console.log(`[END MEETING] Starting automatic MOM generation...`);
+      try {
+        // Check if minutes already exist
+        let existingMinutes = await MeetingMinutes.findOne({ meetingId });
+        if (existingMinutes && existingMinutes.status === 'completed') {
+          console.log(`[END MEETING] MOM already exists for meeting ${meetingId}`);
+        } else {
+          // Prepare attendees data
+          const attendees = meetingForMom.participants
+            .filter(p => p.user)
+            .map(p => ({
+              user: p.user._id,
+              name: p.user.username,
+              email: p.user.email,
+              role: p.role,
+              joinedAt: p.joinedAt,
+              leftAt: p.leftAt,
+              duration: p.leftAt && p.joinedAt 
+                ? Math.round((new Date(p.leftAt) - new Date(p.joinedAt)) / 60000)
+                : durationMinutes
+            }));
+
+          // Get transcripts from the original meeting object (not updatedMeeting which doesn't have them)
+          // Also fetch fresh from DB to ensure we have the latest transcripts
+          const meetingWithTranscripts = await Meeting.findOne({ meetingId }).select('transcripts');
+          const rawTranscripts = meetingWithTranscripts?.transcripts || meeting.transcripts || [];
+          
+          const transcripts = rawTranscripts.map(t => ({
+            speakerName: t.speakerName || 'Unknown',
+            text: t.text || '',
+            startTime: t.timestamp || new Date()
+          }));
+
+          console.log(`[END MEETING] Found ${transcripts.length} transcripts for MOM generation`);
+          if (transcripts.length > 0) {
+            console.log(`[END MEETING] First transcript sample:`, JSON.stringify(transcripts[0]));
+          }
+
+          // Create meeting minutes record
+          const minutesData = {
+            meeting: meetingForMom._id,
+            meetingId: meetingForMom.meetingId,
+            title: meetingForMom.title || 'Untitled Meeting',
+            date: startTime,
+            startTime: startTime,
+            endTime: endTime,
+            duration: durationMinutes,
+            attendees: attendees,
+            transcripts: transcripts,
+            status: 'processing'
+          };
+
+          let meetingMinutes;
+          if (existingMinutes) {
+            meetingMinutes = await MeetingMinutes.findByIdAndUpdate(
+              existingMinutes._id,
+              minutesData,
+              { new: true }
+            );
+          } else {
+            meetingMinutes = new MeetingMinutes(minutesData);
+            await meetingMinutes.save();
+          }
+
+          // Generate AI-powered minutes using Gemini (async, don't wait)
+          const minutesId = meetingMinutes._id;
+          const meetingTitle = meetingForMom.title;
+          const meetingIdForEmail = meetingForMom.meetingId;
+          setImmediate(async () => {
+            try {
+              console.log(`[END MEETING] Generating AI minutes for meeting ${meetingId}...`);
+              const aiMinutes = await geminiService.generateMeetingMinutes({
+                title: meetingTitle,
+                date: startTime,
+                duration: durationMinutes,
+                attendees: attendees,
+                transcripts: transcripts
+              });
+
+              console.log(`[END MEETING] AI minutes generated successfully`);
+
+              // Refetch the document to avoid stale data issues
+              const minutesToUpdate = await MeetingMinutes.findById(minutesId);
+              if (!minutesToUpdate) {
+                console.error(`[END MEETING] Could not find meeting minutes with id ${minutesId}`);
+                return;
+              }
+
+              // Update with AI-generated content
+              minutesToUpdate.summary = aiMinutes.summary;
+              minutesToUpdate.agenda = aiMinutes.agenda;
+              minutesToUpdate.discussionPoints = aiMinutes.discussionPoints;
+              minutesToUpdate.decisions = aiMinutes.decisions;
+              minutesToUpdate.actionItems = aiMinutes.actionItems;
+              minutesToUpdate.highlights = aiMinutes.highlights;
+              minutesToUpdate.questionsRaised = aiMinutes.questionsRaised;
+              minutesToUpdate.followUps = aiMinutes.followUps;
+              minutesToUpdate.aiProcessing = aiMinutes.aiProcessing;
+              minutesToUpdate.status = 'completed';
+
+              await minutesToUpdate.save();
+              console.log(`[END MEETING] Meeting minutes saved to database`);
+
+              // Queue emails for each recipient
+              const recipients = attendees.filter(a => a.email);
+              if (recipients.length > 0) {
+                for (const recipient of recipients) {
+                  await queueService.addEmailJob('meeting-minutes', {
+                    meetingId: meetingIdForEmail,
+                    recipientEmail: recipient.email
+                  });
+                }
+                console.log(`[END MEETING] Queued emails for ${recipients.length} recipients`);
+              }
+            } catch (aiError) {
+              console.error(`[END MEETING] AI processing error:`, aiError);
+              try {
+                await MeetingMinutes.findByIdAndUpdate(minutesId, {
+                  status: 'failed',
+                  error: aiError.message
+                });
+              } catch (updateError) {
+                console.error(`[END MEETING] Failed to update minutes status:`, updateError);
+              }
+            }
+          });
+        }
+      } catch (momError) {
+        console.error(`[END MEETING] Error initiating MOM generation:`, momError);
+        // Don't fail the end meeting request if MOM generation fails
+      }
 
       res.json({
         success: true,
         message: 'Meeting ended successfully',
-        data: { duration: meeting.statistics.totalDuration }
+        data: { 
+          duration: updatedMeeting.statistics.totalDuration,
+          meetingId: updatedMeeting.meetingId
+        }
       });
     } catch (error) {
       console.error('End meeting error:', error);
@@ -564,12 +718,15 @@ const meetingController = {
         });
       }
 
-      // Check if user is a participant
+      // Check if user is a participant (allow any status - they may be saving final transcripts as meeting ends)
       const isParticipant = meeting.participants.some(
-        p => p.user.toString() === req.userId.toString() && p.status === 'joined'
+        p => p.user.toString() === req.userId.toString()
       );
 
-      if (!isParticipant) {
+      // Also allow host to save transcripts
+      const isHost = meeting.host.toString() === req.userId.toString();
+
+      if (!isParticipant && !isHost) {
         return res.status(403).json({
           success: false,
           message: 'Only participants can save transcripts'
@@ -588,6 +745,7 @@ const meetingController = {
       if (newTranscripts.length > 0) {
         meeting.transcripts = [...(meeting.transcripts || []), ...newTranscripts];
         await meeting.save();
+        console.log(`[TRANSCRIPTS] Saved ${newTranscripts.length} new transcripts for meeting ${meetingId}`);
       }
 
       res.json({

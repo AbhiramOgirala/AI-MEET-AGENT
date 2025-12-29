@@ -256,7 +256,28 @@ io.on('connection', (socket) => {
     socket.to(data.meetingId).emit('video-toggled', videoData);
   });
 
-  socket.on('screen-share', (data) => {
+  socket.on('screen-share', async (data) => {
+    // Enforce screen share settings - host can always share
+    try {
+      const Meeting = require('./models/Meeting');
+      const meeting = await Meeting.findOne({ meetingId: data.meetingId });
+      
+      if (meeting) {
+        const isHost = meeting.host.toString() === socket.userId;
+        const participant = meeting.participants.find(p => p.user.toString() === socket.userId);
+        const isCoHost = participant?.role === 'co-host';
+        
+        // If screen share is disabled and user is not host/co-host, reject
+        if (!isHost && !isCoHost && meeting.settings.enableScreenShare === false && data.active) {
+          console.log('Screen share disabled by host, rejecting from non-host');
+          socket.emit('screen-share-error', { message: 'Screen sharing is disabled by the host' });
+          return;
+        }
+      }
+    } catch (err) {
+      console.error('Error checking screen share permission:', err);
+    }
+    
     // Ensure odId is set for participant matching on frontend
     const screenData = {
       ...data,
@@ -272,6 +293,28 @@ io.on('connection', (socket) => {
 
   socket.on('remove-participant', (data) => {
     socket.to(data.participantId).emit('removed-from-meeting', data);
+  });
+
+  // Host settings update - broadcast to all participants
+  socket.on('update-settings', async (data) => {
+    const { meetingId, settings } = data;
+    console.log('Settings update received:', data);
+    
+    // Verify user is host before broadcasting
+    try {
+      const Meeting = require('./models/Meeting');
+      const meeting = await Meeting.findOne({ meetingId });
+      
+      if (meeting && meeting.host.toString() === socket.userId) {
+        // Broadcast settings to all participants in the meeting
+        io.to(meetingId).emit('settings-updated', { meetingId, settings });
+        console.log(`Settings broadcast to meeting ${meetingId}:`, settings);
+      } else {
+        console.log('Non-host tried to update settings');
+      }
+    } catch (err) {
+      console.error('Error broadcasting settings:', err);
+    }
   });
 
   // Raise hand
@@ -304,6 +347,21 @@ io.on('connection', (socket) => {
     try {
       const Meeting = require('./models/Meeting');
       const User = require('./models/User');
+      
+      // Get meeting to check settings and host
+      const meeting = await Meeting.findOne({ meetingId });
+      if (!meeting) {
+        console.log('Meeting not found for chat');
+        return;
+      }
+      
+      // Check if chat is enabled - host can always chat
+      const isHost = meeting.host.toString() === socket.userId;
+      if (!isHost && meeting.settings.enableChat === false) {
+        console.log('Chat disabled by host, rejecting message from non-host');
+        socket.emit('chat-error', { message: 'Chat is disabled by the host' });
+        return;
+      }
       
       // Get sender info
       const sender = await User.findById(socket.userId).select('username avatar');

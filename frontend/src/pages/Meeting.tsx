@@ -62,6 +62,31 @@ const MeetingPage: React.FC = () => {
   const recognitionRef = useRef<any>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
+  
+  // Refs to track current state without causing re-renders in socket listeners
+  const isScreenSharingRef = useRef(false);
+  const isRecordingRef = useRef(false);
+  const meetingRef = useRef<Meeting | null>(null);
+  const isInitializedRef = useRef(false);
+  const subtitlesRef = useRef<Array<{ speaker: string; text: string; timestamp: Date }>>([]);
+  const isHostRef = useRef(false);
+
+  // Keep refs in sync with state
+  useEffect(() => {
+    isScreenSharingRef.current = isScreenSharing;
+  }, [isScreenSharing]);
+
+  useEffect(() => {
+    isRecordingRef.current = isRecording;
+  }, [isRecording]);
+
+  useEffect(() => {
+    meetingRef.current = meeting;
+  }, [meeting]);
+
+  useEffect(() => {
+    subtitlesRef.current = subtitles;
+  }, [subtitles]);
 
   const initializeMeeting = useCallback(async () => {
     try {
@@ -351,10 +376,91 @@ const MeetingPage: React.FC = () => {
     socketService.onReaction(() => {
       // Show reaction animation
     });
+
+    // Error handlers for host-controlled features
+    socketService.onChatError((data: { message: string }) => {
+      toast.error(data.message || 'Chat is disabled by the host');
+    });
+
+    socketService.onScreenShareError((data: { message: string }) => {
+      toast.error(data.message || 'Screen sharing is disabled by the host');
+      setIsScreenSharing(false);
+    });
+
+    // Listen for settings updates from host
+    socketService.onSettingsUpdated((data: { meetingId: string; settings: Meeting['settings'] }) => {
+      console.log('Settings updated by host:', data);
+      
+      // Get current user from localStorage for comparison
+      const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
+      
+      // Check if current user is not the host - use ref to avoid stale closure
+      const currentMeeting = meetingRef.current;
+      const isCurrentUserHost = currentMeeting?.host && (
+        (typeof currentMeeting.host === 'object' && currentMeeting.host._id === currentUser._id) ||
+        (typeof currentMeeting.host === 'string' && currentMeeting.host === currentUser._id)
+      );
+      
+      // If screen share was disabled and user is currently sharing (and not host), stop it
+      // Use ref to get current value without causing re-renders
+      if (data.settings.enableScreenShare === false && isScreenSharingRef.current && !isCurrentUserHost) {
+        webrtcService.stopScreenShare();
+        setIsScreenSharing(false);
+        if (localVideoRef.current && webrtcService.getLocalStream()) {
+          localVideoRef.current.srcObject = webrtcService.getLocalStream();
+        }
+        toast.error('Screen sharing has been disabled by the host');
+      }
+      
+      // If recording was disabled and user is currently recording (and not host), stop it
+      // Use ref to get current value without causing re-renders
+      if (data.settings.enableRecording === false && isRecordingRef.current && !isCurrentUserHost) {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+          mediaRecorderRef.current.stop();
+        }
+        setIsRecording(false);
+        toast.error('Recording has been disabled by the host');
+      }
+      
+      setMeeting(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          settings: {
+            ...prev.settings,
+            ...data.settings
+          }
+        };
+      });
+      
+      // Show relevant notifications based on what changed (only for non-hosts)
+      if (!isCurrentUserHost) {
+        if (data.settings.enableChat === false) {
+          toast('Chat has been disabled by the host', { icon: '🔒' });
+        } else if (data.settings.enableChat === true) {
+          toast('Chat has been enabled by the host', { icon: '💬' });
+        }
+        if (data.settings.enableScreenShare === true) {
+          toast('Screen sharing has been enabled by the host', { icon: '🖥️' });
+        }
+        if (data.settings.enableRecording === false) {
+          toast('Recording has been disabled by the host', { icon: '🔒' });
+        } else if (data.settings.enableRecording === true) {
+          toast('Recording has been enabled by the host', { icon: '🎥' });
+        }
+      }
+    });
   }, [navigate, addNotification, meetingId]);
 
   useEffect(() => {
     if (!meetingId) return;
+    
+    // Prevent duplicate initialization (React Strict Mode causes double renders)
+    if (isInitializedRef.current) {
+      console.log('Meeting already initialized, skipping duplicate init');
+      return;
+    }
+    isInitializedRef.current = true;
 
     const init = async () => {
       await initializeMeeting();
@@ -368,11 +474,51 @@ const MeetingPage: React.FC = () => {
     
     init();
 
+    // Handle page unload - save transcripts before leaving
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      // Save transcripts synchronously using sendBeacon if available
+      const currentSubtitles = subtitlesRef.current;
+      const currentMeeting = meetingRef.current;
+      
+      if (currentSubtitles.length > 0 && currentMeeting) {
+        const transcriptsToSave = currentSubtitles.map(s => ({
+          speakerName: s.speaker,
+          text: s.text,
+          timestamp: s.timestamp
+        }));
+        
+        // Use sendBeacon for reliable delivery on page unload
+        const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
+        const token = localStorage.getItem('token');
+        
+        if (navigator.sendBeacon && token) {
+          const blob = new Blob([JSON.stringify({ transcripts: transcriptsToSave })], {
+            type: 'application/json'
+          });
+          // Note: sendBeacon doesn't support custom headers, so we'll use a query param for auth
+          navigator.sendBeacon(
+            `${apiUrl}/meetings/${currentMeeting.meetingId}/transcripts?token=${token}`,
+            blob
+          );
+          console.log('Sent transcripts via sendBeacon on page unload');
+        }
+      }
+      
+      // Show confirmation dialog
+      e.preventDefault();
+      e.returnValue = 'You have an active meeting. Are you sure you want to leave?';
+      return e.returnValue;
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
     return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
       // Clean up all listeners before disconnecting
       socketService.removeAllMeetingListeners();
       webrtcService.cleanup();
       socketService.disconnect();
+      isInitializedRef.current = false;
     };
   }, [meetingId, initializeMeeting, setupSocketListeners, user?._id]);
 
@@ -508,29 +654,30 @@ const MeetingPage: React.FC = () => {
     };
   }, [meeting, user?.username]);
 
-  // Save transcripts to server periodically (every 30 seconds)
+  // Save transcripts to server periodically (every 10 seconds)
   useEffect(() => {
-    if (!meeting || subtitles.length === 0) return;
+    if (!meeting) return;
 
     const saveInterval = setInterval(async () => {
-      if (subtitles.length > 0) {
+      const currentSubtitles = subtitlesRef.current;
+      if (currentSubtitles.length > 0) {
         try {
-          const transcriptsToSave = subtitles.map(s => ({
+          const transcriptsToSave = currentSubtitles.map(s => ({
             speakerName: s.speaker,
             text: s.text,
             timestamp: s.timestamp
           }));
           
           await apiService.saveTranscripts(meeting.meetingId, transcriptsToSave);
-          console.log(`Saved ${transcriptsToSave.length} transcripts to server`);
+          console.log(`[TRANSCRIPT SAVE] Saved ${transcriptsToSave.length} transcripts to server`);
         } catch (error) {
-          console.error('Failed to save transcripts:', error);
+          console.error('[TRANSCRIPT SAVE] Failed to save transcripts:', error);
         }
       }
-    }, 30000); // Save every 30 seconds
+    }, 10000); // Save every 10 seconds
 
     return () => clearInterval(saveInterval);
-  }, [meeting, subtitles]);
+  }, [meeting]);
 
   const toggleAudio = () => {
     const newState = !isAudioEnabled;
@@ -585,6 +732,12 @@ const MeetingPage: React.FC = () => {
   };
 
   const toggleScreenShare = async () => {
+    // Check permission before starting screen share
+    if (!isScreenSharing && !canScreenShare) {
+      toast.error('Screen sharing is disabled by the host');
+      return;
+    }
+    
     if (!isScreenSharing) {
       try {
         const screenStream = await webrtcService.startScreenShare();
@@ -658,6 +811,11 @@ const MeetingPage: React.FC = () => {
   const hostId = meeting?.host && (typeof meeting.host === 'string' ? meeting.host : meeting.host._id);
   const isHost = currentParticipant?.role === 'host' || hostId === user?._id;
   
+  // Keep isHost ref in sync - this ensures button always shows correct state
+  useEffect(() => {
+    isHostRef.current = isHost;
+  }, [isHost]);
+  
   // Debug log for host status
   console.log('Host check:', {
     isHost,
@@ -668,16 +826,19 @@ const MeetingPage: React.FC = () => {
   });
   
   const isCoHost = currentParticipant?.role === 'co-host';
-  const canRecord = isHost || isCoHost || currentParticipant?.permissions?.canRecord;
+  // Host can always record, others depend on settings AND individual permissions
+  const canRecord = isHost || (meeting?.settings?.enableRecording !== false && (isCoHost || currentParticipant?.permissions?.canRecord));
   // Host can always chat, others depend on settings
   const canChat = isHost || (meeting?.settings?.enableChat !== false);
+  // Host and co-host can always screen share, others depend on settings
+  const canScreenShare = isHost || isCoHost || (meeting?.settings?.enableScreenShare !== false);
 
   const toggleRecording = async () => {
     if (!meeting) return;
 
-    // Check permission - host can always record
-    if (!isHost && !canRecord) {
-      toast.error('You do not have permission to record this meeting');
+    // Check permission - host can always record, others need recording enabled AND permission
+    if (!canRecord) {
+      toast.error('Recording is disabled by the host');
       return;
     }
 
@@ -806,23 +967,31 @@ const MeetingPage: React.FC = () => {
 
   const leaveMeeting = async () => {
     try {
-      if (meeting) {
-        await apiService.leaveMeeting(meeting.meetingId);
+      const currentMeeting = meetingRef.current;
+      if (currentMeeting) {
+        await apiService.leaveMeeting(currentMeeting.meetingId);
       }
       cleanup();
       navigate('/dashboard');
     } catch (error) {
       console.error('Error leaving meeting:', error);
+      cleanup();
+      navigate('/dashboard');
     }
   };
 
   const endMeeting = useCallback(async () => {
-    console.log('endMeeting function called');
-    console.log('meeting:', meeting?.meetingId);
-    console.log('subtitles count:', subtitles.length);
+    // Use refs to get current state to avoid stale closure
+    const currentMeeting = meetingRef.current;
+    const currentSubtitles = subtitlesRef.current;
     
-    if (!meeting) {
-      console.log('No meeting object, returning');
+    console.log('=== END MEETING CALLED ===');
+    console.log('meeting:', currentMeeting?.meetingId);
+    console.log('subtitles count:', currentSubtitles.length);
+    
+    if (!currentMeeting) {
+      console.error('No meeting object found in ref!');
+      toast.error('Meeting data not available');
       return;
     }
     
@@ -836,77 +1005,44 @@ const MeetingPage: React.FC = () => {
     }
 
     console.log('User confirmed, proceeding to end meeting...');
+    toast.loading('Ending meeting and generating minutes...', { id: 'end-meeting' });
 
     try {
-      toast.loading('Ending meeting and generating minutes...', { id: 'end-meeting' });
-      
-      // Save any remaining transcripts first
-      if (subtitles.length > 0) {
+      // Save any remaining transcripts first - this is important for MOM generation
+      if (currentSubtitles.length > 0) {
         try {
-          const transcriptsToSave = subtitles.map(s => ({
+          const transcriptsToSave = currentSubtitles.map(s => ({
             speakerName: s.speaker,
             text: s.text,
             timestamp: s.timestamp
           }));
-          await apiService.saveTranscripts(meeting.meetingId, transcriptsToSave);
-          console.log('Final transcripts saved before ending meeting');
+          console.log(`Saving ${transcriptsToSave.length} transcripts before ending meeting...`);
+          await apiService.saveTranscripts(currentMeeting.meetingId, transcriptsToSave);
+          console.log('Final transcripts saved successfully');
         } catch (saveError) {
           console.error('Failed to save final transcripts:', saveError);
+          // Continue anyway - backend will use whatever transcripts it has
         }
       }
       
-      // End the meeting
-      await apiService.endMeeting(meeting.meetingId);
+      // End the meeting - backend will automatically generate MOM
+      console.log('Calling endMeeting API...');
+      const endResponse = await apiService.endMeeting(currentMeeting.meetingId);
+      console.log('Meeting ended successfully:', endResponse);
       
-      // Generate meeting minutes with transcripts (if available)
-      try {
-        // Use local transcripts, or fetch from server if local is empty
-        let transcriptsData = subtitles.map(s => ({
-          speakerName: s.speaker,
-          startTime: s.timestamp,
-          text: s.text
-        }));
-        
-        // If no local transcripts, try to get from server
-        if (transcriptsData.length === 0) {
-          try {
-            const serverTranscripts = await apiService.getTranscripts(meeting.meetingId);
-            if (serverTranscripts.success && serverTranscripts.data?.transcripts) {
-              transcriptsData = serverTranscripts.data.transcripts.map((t: any) => ({
-                speakerName: t.speakerName,
-                startTime: t.timestamp,
-                text: t.text
-              }));
-              console.log(`Using ${transcriptsData.length} transcripts from server`);
-            }
-          } catch (fetchError) {
-            console.error('Failed to fetch server transcripts:', fetchError);
-          }
-        }
-        
-        console.log(`Sending ${transcriptsData.length} transcript entries for MOM generation`);
-        
-        if (transcriptsData.length === 0) {
-          console.warn('No transcripts captured! Make sure microphone is enabled and speech recognition is working.');
-        }
-        
-        console.log('Calling generateMeetingMinutes API...');
-        const momResponse = await apiService.generateMeetingMinutes(meeting.meetingId, transcriptsData);
-        console.log('MOM generation response:', momResponse);
-        toast.success(`Meeting ended! Minutes generated with ${transcriptsData.length} transcript entries.`, { id: 'end-meeting' });
-      } catch (minutesError: any) {
-        console.error('Error generating minutes:', minutesError);
-        console.error('Error details:', minutesError?.response?.data || minutesError?.message);
-        toast.success('Meeting ended! (Minutes generation may have failed)', { id: 'end-meeting' });
-      }
+      // Show success message - MOM is being generated in the background
+      toast.success('Meeting ended! Minutes are being generated and will be emailed to participants.', { id: 'end-meeting' });
       
-      cleanup();
-      navigate('/dashboard');
-    } catch (error) {
-      console.error('Error ending meeting:', error);
-      toast.error('Failed to end meeting', { id: 'end-meeting' });
+    } catch (endError: any) {
+      console.error('Error ending meeting:', endError);
+      console.error('End meeting error details:', endError?.response?.data || endError?.message);
+      toast.error('Failed to end meeting properly. Please try again.', { id: 'end-meeting' });
+      return; // Don't navigate away if end meeting failed
     }
-  }, [meeting, subtitles, navigate]);
+    
+    cleanup();
+    navigate('/dashboard');
+  }, [navigate]);
 
   const cleanup = () => {
     webrtcService.cleanup();
@@ -968,6 +1104,10 @@ const MeetingPage: React.FC = () => {
             settings: response.data!.meeting.settings
           };
         });
+        
+        // Broadcast settings update to all participants via socket
+        socketService.updateSettings(meeting.meetingId, response.data.meeting.settings);
+        
         toast.success('Settings updated');
       }
     } catch (error) {
@@ -1479,30 +1619,30 @@ const MeetingPage: React.FC = () => {
 
           <button
             onClick={toggleScreenShare}
-            disabled={!isHost && !isCoHost && meeting?.settings.enableScreenShare === false}
+            disabled={!canScreenShare}
             className={`p-3 rounded-full transition-colors ${
               isScreenSharing 
                 ? 'bg-blue-600 hover:bg-blue-700' 
-                : (!isHost && !isCoHost && meeting?.settings.enableScreenShare === false)
+                : !canScreenShare
                   ? 'bg-secondary-800 cursor-not-allowed opacity-50'
                   : 'bg-secondary-700 hover:bg-secondary-600'
             }`}
-            title={(!isHost && !isCoHost && meeting?.settings.enableScreenShare === false) ? 'Screen share disabled by host' : 'Share screen'}
+            title={!canScreenShare ? 'Screen share disabled by host' : 'Share screen'}
           >
             <ComputerDesktopIcon className="w-6 h-6" />
           </button>
 
           <button
             onClick={toggleRecording}
-            disabled={!isHost && !canRecord}
+            disabled={!canRecord}
             className={`p-3 rounded-full transition-colors ${
               isRecording 
                 ? 'bg-red-600 hover:bg-red-700' 
-                : (!isHost && !canRecord)
+                : !canRecord
                   ? 'bg-secondary-800 cursor-not-allowed opacity-50'
                   : 'bg-secondary-700 hover:bg-secondary-600'
             }`}
-            title={(!isHost && !canRecord) ? 'Recording not allowed' : (isRecording ? 'Stop recording' : 'Start recording')}
+            title={!canRecord ? 'Recording disabled by host' : (isRecording ? 'Stop recording' : 'Start recording')}
           >
             {isRecording ? (
               <StopIcon className="w-6 h-6" />
@@ -1525,7 +1665,8 @@ const MeetingPage: React.FC = () => {
           {isHost ? (
             <button
               onClick={(e) => {
-                console.log('End Meeting button clicked, isHost:', isHost);
+                console.log('=== END MEETING BUTTON CLICKED ===');
+                console.log('isHost:', isHost, 'isHostRef:', isHostRef.current);
                 e.preventDefault();
                 e.stopPropagation();
                 endMeeting();
@@ -1539,10 +1680,17 @@ const MeetingPage: React.FC = () => {
           ) : (
             <button
               onClick={(e) => {
-                console.log('Leave button clicked, isHost:', isHost);
+                console.log('=== LEAVE BUTTON CLICKED ===');
+                console.log('isHost:', isHost, 'isHostRef:', isHostRef.current);
                 e.preventDefault();
                 e.stopPropagation();
-                leaveMeeting();
+                // Double-check with ref in case state is stale
+                if (isHostRef.current) {
+                  console.log('isHostRef is true, calling endMeeting instead');
+                  endMeeting();
+                } else {
+                  leaveMeeting();
+                }
               }}
               className="bg-red-600 hover:bg-red-700 px-6 py-3 rounded-full transition-colors flex items-center space-x-2"
             >

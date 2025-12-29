@@ -67,14 +67,24 @@ router.post('/message', authenticateToken, async (req, res) => {
     }
 
     // Check if user is participant
-    const isParticipant = meeting.participants.some(p => 
+    const participant = meeting.participants.find(p => 
       p.user && p.user._id && p.user._id.toString() === req.userId.toString()
     );
 
-    if (!isParticipant) {
+    if (!participant) {
       return res.status(403).json({
         success: false,
         message: 'You are not a participant in this meeting'
+      });
+    }
+    
+    const isHost = participant.role === 'host';
+
+    // Check if chat is enabled (host can always chat)
+    if (!isHost && meeting.settings.enableChat === false) {
+      return res.status(403).json({
+        success: false,
+        message: 'Chat is disabled by the host'
       });
     }
 
@@ -144,14 +154,24 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req, res
     }
 
     // Check if user is participant
-    const isParticipant = meeting.participants.some(p => 
+    const participant = meeting.participants.find(p => 
       p.user && p.user._id && p.user._id.toString() === req.userId.toString()
     );
 
-    if (!isParticipant) {
+    if (!participant) {
       return res.status(403).json({
         success: false,
         message: 'You are not a participant in this meeting'
+      });
+    }
+    
+    const isHost = participant.role === 'host';
+
+    // Check if chat is enabled (host can always upload files)
+    if (!isHost && meeting.settings.enableChat === false) {
+      return res.status(403).json({
+        success: false,
+        message: 'Chat is disabled by the host'
       });
     }
 

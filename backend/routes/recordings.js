@@ -77,8 +77,18 @@ router.post('/start', authenticateToken, async (req, res) => {
     const participant = meeting.participants.find(p => 
       p.user.toString() === req.userId.toString() && p.status === 'joined'
     );
+    
+    const isHost = participant?.role === 'host';
 
-    if (!participant || (participant.role !== 'host' && !participant.permissions.canRecord)) {
+    // Check if recording is enabled in settings (host can always record)
+    if (!isHost && meeting.settings.enableRecording === false) {
+      return res.status(403).json({
+        success: false,
+        message: 'Recording is disabled by the host'
+      });
+    }
+
+    if (!participant || (!isHost && !participant.permissions.canRecord)) {
       return res.status(403).json({
         success: false,
         message: 'You do not have permission to record this meeting'
@@ -138,8 +148,10 @@ router.post('/stop', authenticateToken, async (req, res) => {
     const participant = meeting.participants.find(p => 
       p.user.toString() === req.userId.toString() && p.status === 'joined'
     );
+    
+    const isHost = participant?.role === 'host';
 
-    if (!participant || (participant.role !== 'host' && !participant.permissions.canRecord)) {
+    if (!participant || (!isHost && !participant.permissions.canRecord)) {
       return res.status(403).json({
         success: false,
         message: 'You do not have permission to stop recording'
@@ -211,8 +223,18 @@ router.post('/upload', authenticateToken, upload.single('recording'), async (req
     const participant = meeting.participants.find(p => 
       p.user.toString() === req.userId.toString() && p.status === 'joined'
     );
+    
+    const isHost = participant?.role === 'host';
 
-    if (!participant || (participant.role !== 'host' && !participant.permissions.canRecord)) {
+    // Check if recording is enabled in settings (host can always upload)
+    if (!isHost && meeting.settings.enableRecording === false) {
+      return res.status(403).json({
+        success: false,
+        message: 'Recording is disabled by the host'
+      });
+    }
+
+    if (!participant || (!isHost && !participant.permissions.canRecord)) {
       return res.status(403).json({
         success: false,
         message: 'You do not have permission to upload recordings'

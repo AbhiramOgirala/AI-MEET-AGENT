@@ -155,6 +155,13 @@ class SocketService {
     }
   }
 
+  // Broadcast settings update to all participants
+  updateSettings(meetingId: string, settings: any): void {
+    if (this.socket) {
+      this.socket.emit(SocketEvents.UPDATE_SETTINGS, { meetingId, settings });
+    }
+  }
+
   // Interactions
   raiseHand(meetingId: string, raised: boolean, odId?: string, username?: string): void {
     if (this.socket) {
@@ -241,6 +248,24 @@ class SocketService {
     }
   }
 
+  onSettingsUpdated(callback: (data: any) => void): void {
+    if (this.socket) {
+      this.socket.on(SocketEvents.SETTINGS_UPDATED, callback);
+    }
+  }
+
+  onChatError(callback: (data: any) => void): void {
+    if (this.socket) {
+      this.socket.on('chat-error', callback);
+    }
+  }
+
+  onScreenShareError(callback: (data: any) => void): void {
+    if (this.socket) {
+      this.socket.on('screen-share-error', callback);
+    }
+  }
+
   onHandRaised(callback: (data: any) => void): void {
     if (this.socket) {
       this.socket.on(SocketEvents.HAND_RAISED, callback);
@@ -280,7 +305,10 @@ class SocketService {
       this.socket.off(SocketEvents.REMOVED_FROM_MEETING);
       this.socket.off(SocketEvents.HAND_RAISED);
       this.socket.off(SocketEvents.REACTION);
+      this.socket.off(SocketEvents.SETTINGS_UPDATED);
       this.socket.off('existing-participants');
+      this.socket.off('chat-error');
+      this.socket.off('screen-share-error');
     }
   }
 

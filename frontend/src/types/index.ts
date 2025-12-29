@@ -200,6 +200,8 @@ export enum SocketEvents {
   REMOVE_PARTICIPANT = 'remove-participant',
   MUTED_BY_HOST = 'muted-by-host',
   REMOVED_FROM_MEETING = 'removed-from-meeting',
+  UPDATE_SETTINGS = 'update-settings',
+  SETTINGS_UPDATED = 'settings-updated',
   
   // Interactions
   RAISE_HAND = 'raise-hand',
