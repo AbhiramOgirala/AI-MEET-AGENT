@@ -447,6 +447,9 @@ const MeetingPage: React.FC = () => {
         (typeof currentMeeting.host === 'string' && currentMeeting.host === currentUser._id)
       );
       
+      // Get previous settings to compare what actually changed
+      const prevSettings = currentMeeting?.settings;
+      
       // If screen share was disabled and user is currently sharing (and not host), stop it
       // Use ref to get current value without causing re-renders
       if (data.settings.enableScreenShare === false && isScreenSharingRef.current && !isCurrentUserHost) {
@@ -479,20 +482,31 @@ const MeetingPage: React.FC = () => {
         };
       });
       
-      // Show relevant notifications based on what changed (only for non-hosts)
-      if (!isCurrentUserHost) {
-        if (data.settings.enableChat === false) {
-          toast('Chat has been disabled by the host', { icon: '🔒' });
-        } else if (data.settings.enableChat === true) {
-          toast('Chat has been enabled by the host', { icon: '💬' });
+      // Show relevant notifications only for settings that actually changed (only for non-hosts)
+      if (!isCurrentUserHost && prevSettings) {
+        // Chat setting changed
+        if (prevSettings.enableChat !== data.settings.enableChat) {
+          if (data.settings.enableChat === false) {
+            toast('Chat has been disabled by the host', { icon: '🔒' });
+          } else if (data.settings.enableChat === true) {
+            toast('Chat has been enabled by the host', { icon: '💬' });
+          }
         }
-        if (data.settings.enableScreenShare === true) {
-          toast('Screen sharing has been enabled by the host', { icon: '🖥️' });
+        // Screen share setting changed
+        if (prevSettings.enableScreenShare !== data.settings.enableScreenShare) {
+          if (data.settings.enableScreenShare === false) {
+            toast('Screen sharing has been disabled by the host', { icon: '🔒' });
+          } else if (data.settings.enableScreenShare === true) {
+            toast('Screen sharing has been enabled by the host', { icon: '🖥️' });
+          }
         }
-        if (data.settings.enableRecording === false) {
-          toast('Recording has been disabled by the host', { icon: '🔒' });
-        } else if (data.settings.enableRecording === true) {
-          toast('Recording has been enabled by the host', { icon: '🎥' });
+        // Recording setting changed
+        if (prevSettings.enableRecording !== data.settings.enableRecording) {
+          if (data.settings.enableRecording === false) {
+            toast('Recording has been disabled by the host', { icon: '🔒' });
+          } else if (data.settings.enableRecording === true) {
+            toast('Recording has been enabled by the host', { icon: '🎥' });
+          }
         }
       }
     });
