@@ -175,6 +175,13 @@ class SocketService {
     }
   }
 
+  // Send transcript to other participants
+  sendTranscript(meetingId: string, transcript: { speaker: string; text: string; odId: string }): void {
+    if (this.socket) {
+      this.socket.emit(SocketEvents.TRANSCRIPT, { meetingId, ...transcript, timestamp: new Date() });
+    }
+  }
+
   // Event listeners
   onUserJoined(callback: (data: any) => void): void {
     if (this.socket) {
@@ -278,6 +285,13 @@ class SocketService {
     }
   }
 
+  // Listen for transcripts from other participants
+  onTranscript(callback: (data: { speaker: string; text: string; odId: string; timestamp: Date }) => void): void {
+    if (this.socket) {
+      this.socket.on(SocketEvents.TRANSCRIPT_RECEIVED, callback);
+    }
+  }
+
   // Remove event listeners
   off(event: string, callback?: (...args: any[]) => void): void {
     if (this.socket) {
@@ -306,6 +320,7 @@ class SocketService {
       this.socket.off(SocketEvents.HAND_RAISED);
       this.socket.off(SocketEvents.REACTION);
       this.socket.off(SocketEvents.SETTINGS_UPDATED);
+      this.socket.off(SocketEvents.TRANSCRIPT_RECEIVED);
       this.socket.off('existing-participants');
       this.socket.off('chat-error');
       this.socket.off('screen-share-error');

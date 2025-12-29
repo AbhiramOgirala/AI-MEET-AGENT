@@ -333,6 +333,23 @@ io.on('connection', (socket) => {
     socket.to(data.meetingId).emit('reaction', data);
   });
 
+  // Real-time transcript sharing between participants
+  socket.on('transcript', (data) => {
+    const { meetingId, speaker, text, odId, timestamp } = data;
+    
+    if (!meetingId || !text) {
+      return;
+    }
+    
+    // Broadcast transcript to all other participants in the meeting
+    socket.to(meetingId).emit('transcript-received', {
+      speaker: speaker || 'Unknown',
+      text,
+      odId: odId || socket.userId,
+      timestamp: timestamp || new Date()
+    });
+  });
+
   // Chat message via socket (real-time)
   socket.on('chat-message', async (data) => {
     console.log('Chat message received from socket:', socket.id, 'userId:', socket.userId);

@@ -44,6 +44,7 @@ const MeetingPage: React.FC = () => {
   const [chatMessages, setChatMessages] = useState<any[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [remoteStreams, setRemoteStreams] = useState<Map<string, MediaStream>>(new Map());
+  const [remoteUsernames, setRemoteUsernames] = useState<Map<string, string>>(new Map());
   const [showSubtitles, setShowSubtitles] = useState(false);
   const [subtitles, setSubtitles] = useState<Array<{ speaker: string; text: string; timestamp: Date }>>([]);
   const [localStreamReady, setLocalStreamReady] = useState(false);
@@ -204,6 +205,9 @@ const MeetingPage: React.FC = () => {
       const odId = typeof data === 'string' ? data : (data.odId || data.socketId);
       const username = typeof data === 'object' ? data.username : 'Someone';
       
+      // Store username for this user
+      setRemoteUsernames(prev => new Map(prev.set(odId, username)));
+      
       // Force new peer connection for rejoining user (handles leave/rejoin scenario)
       webrtcService.createOffer(odId, true);
       
@@ -223,6 +227,10 @@ const MeetingPage: React.FC = () => {
     // Handle existing participants when joining a meeting
     socketService.onExistingParticipants((participants) => {
       console.log('Existing participants:', participants);
+      // Store usernames for all existing participants
+      participants.forEach(participant => {
+        setRemoteUsernames(prev => new Map(prev.set(participant.odId, participant.username)));
+      });
       // Create fresh peer connections for all existing participants
       participants.forEach(participant => {
         webrtcService.createOffer(participant.odId, true);
@@ -234,6 +242,13 @@ const MeetingPage: React.FC = () => {
       // Handle both old format (string) and new format (object)
       const odId = typeof data === 'string' ? data : (data.odId || data.socketId);
       webrtcService.cleanupPeerConnection(odId);
+      
+      // Clean up stored username
+      setRemoteUsernames(prev => {
+        const newMap = new Map(prev);
+        newMap.delete(odId);
+        return newMap;
+      });
       
       // Refresh meeting data to get updated participants list
       if (meetingId) {
@@ -375,6 +390,37 @@ const MeetingPage: React.FC = () => {
 
     socketService.onReaction(() => {
       // Show reaction animation
+    });
+
+    // Listen for transcripts from other participants
+    socketService.onTranscript((data: { speaker: string; text: string; odId: string; timestamp: Date }) => {
+      console.log('Received transcript from other participant:', data);
+      
+      // Get current user to avoid adding our own transcripts twice
+      const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
+      if (data.odId === currentUser._id) {
+        return; // Skip our own transcripts (we already added them locally)
+      }
+      
+      const newSubtitle = {
+        speaker: data.speaker,
+        text: data.text,
+        timestamp: new Date(data.timestamp)
+      };
+      
+      setSubtitles(prev => {
+        // Avoid duplicates by checking if we already have this exact transcript
+        const isDuplicate = prev.some(s => 
+          s.speaker === newSubtitle.speaker && 
+          s.text === newSubtitle.text &&
+          Math.abs(new Date(s.timestamp).getTime() - newSubtitle.timestamp.getTime()) < 2000
+        );
+        if (isDuplicate) return prev;
+        
+        const updated = [...prev, newSubtitle];
+        console.log(`Total transcripts after receiving from ${data.speaker}: ${updated.length}`);
+        return updated;
+      });
     });
 
     // Error handlers for host-controlled features
@@ -592,6 +638,17 @@ const MeetingPage: React.FC = () => {
             console.log(`Total transcripts: ${updated.length}`);
             return updated;
           });
+          
+          // Broadcast transcript to other participants
+          const currentMeeting = meetingRef.current;
+          if (currentMeeting && user?._id) {
+            socketService.sendTranscript(currentMeeting.meetingId, {
+              speaker: user.username || 'Unknown',
+              text: transcript,
+              odId: user._id
+            });
+            console.log('Broadcast transcript to other participants');
+          }
         }
       };
 
@@ -1453,9 +1510,10 @@ const MeetingPage: React.FC = () => {
 
           {/* Remote Videos */}
           {Array.from(remoteStreams.entries()).map(([odId, stream]) => {
-            // Look up username from participants list
+            // Look up username from participants list first, then fallback to stored username
             const participant = meeting?.participants.find(p => p.user._id === odId);
-            const displayName = participant?.user.username || `User ${odId.slice(0, 8)}`;
+            const storedUsername = remoteUsernames.get(odId);
+            const displayName = participant?.user.username || storedUsername || `User ${odId.slice(0, 8)}`;
             const participantMediaState = participant?.mediaState;
             
             return (

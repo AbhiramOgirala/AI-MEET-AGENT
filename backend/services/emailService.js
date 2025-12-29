@@ -9,13 +9,34 @@ class EmailService {
   initialize() {
     if (this.initialized) return;
     
+    // Check if email credentials are configured
+    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+      console.warn('Email credentials not configured - email service disabled');
+      this.initialized = true;
+      return;
+    }
+    
+    const port = parseInt(process.env.EMAIL_PORT) || 587;
+    
     this.transporter = nodemailer.createTransport({
       host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-      port: parseInt(process.env.EMAIL_PORT) || 587,
-      secure: false,
+      port: port,
+      secure: port === 465, // Use TLS for port 465, STARTTLS for 587
       auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS
+      },
+      // Add timeouts to prevent hanging connections
+      connectionTimeout: 10000, // 10 seconds
+      greetingTimeout: 10000,
+      socketTimeout: 30000,
+      // Pool connections for better reliability
+      pool: true,
+      maxConnections: 3,
+      maxMessages: 100,
+      // TLS options for better compatibility
+      tls: {
+        rejectUnauthorized: false // Allow self-signed certs (needed for some SMTP servers)
       }
     });
     
@@ -27,17 +48,26 @@ class EmailService {
     this.initialize();
     
     if (!this.transporter) {
-      console.error('Email transporter not configured');
-      throw new Error('Email service not configured');
+      console.warn('Email transporter not configured - skipping email send');
+      return recipients.map(r => ({
+        email: r.email,
+        status: 'skipped',
+        error: 'Email service not configured'
+      }));
     }
 
-    // Verify transporter connection
+    // Verify transporter connection with timeout
     try {
-      await this.transporter.verify();
+      const verifyPromise = this.transporter.verify();
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Verification timeout')), 10000)
+      );
+      await Promise.race([verifyPromise, timeoutPromise]);
       console.log('Email transporter verified successfully');
     } catch (verifyError) {
       console.error('Email transporter verification failed:', verifyError.message);
-      throw new Error(`Email configuration error: ${verifyError.message}`);
+      // Don't throw - try to send anyway, some SMTP servers don't support VERIFY
+      console.log('Attempting to send emails despite verification failure...');
     }
 
     const results = [];

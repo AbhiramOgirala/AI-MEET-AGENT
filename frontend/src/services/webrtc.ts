@@ -72,10 +72,13 @@ class WebRTCService {
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
+          // Add latency hints for better real-time performance
+          latency: 0,
         } : false,
         video: video ? {
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
+          width: { ideal: 1280, max: 1920 },
+          height: { ideal: 720, max: 1080 },
+          frameRate: { ideal: 30, max: 30 },
           facingMode: 'user',
         } : false,
       };
@@ -195,6 +198,11 @@ class WebRTCService {
       }
     };
 
+    // Handle ICE gathering state for debugging
+    pc.onicegatheringstatechange = () => {
+      console.log(`ICE gathering state with ${userId}:`, pc.iceGatheringState);
+    };
+
     // Handle ICE connection state changes
     pc.oniceconnectionstatechange = () => {
       console.log(`ICE connection state with ${userId}:`, pc.iceConnectionState);
@@ -202,6 +210,14 @@ class WebRTCService {
       if (pc.iceConnectionState === 'failed') {
         console.log(`ICE connection failed with ${userId}, attempting restart...`);
         pc.restartIce();
+      } else if (pc.iceConnectionState === 'disconnected') {
+        // Give it a moment to recover before cleaning up
+        setTimeout(() => {
+          if (pc.iceConnectionState === 'disconnected') {
+            console.log(`ICE still disconnected with ${userId}, attempting restart...`);
+            pc.restartIce();
+          }
+        }, 3000);
       }
     };
 
@@ -209,8 +225,17 @@ class WebRTCService {
     pc.onconnectionstatechange = () => {
       console.log(`Connection state with ${userId}:`, pc.connectionState);
       
-      if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+      if (pc.connectionState === 'failed') {
+        console.log(`Connection failed with ${userId}, cleaning up...`);
         this.cleanupPeerConnection(userId);
+      } else if (pc.connectionState === 'disconnected') {
+        // Wait before cleanup to allow recovery
+        setTimeout(() => {
+          if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+            console.log(`Connection still disconnected with ${userId}, cleaning up...`);
+            this.cleanupPeerConnection(userId);
+          }
+        }, 5000);
       }
     };
 

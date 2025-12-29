@@ -207,4 +207,8 @@ export enum SocketEvents {
   RAISE_HAND = 'raise-hand',
   HAND_RAISED = 'hand-raised',
   REACTION = 'reaction',
+  
+  // Transcripts (for real-time speech-to-text sharing)
+  TRANSCRIPT = 'transcript',
+  TRANSCRIPT_RECEIVED = 'transcript-received',
 }
